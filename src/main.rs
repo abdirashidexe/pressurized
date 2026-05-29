@@ -93,6 +93,7 @@ fn main() {
             Update,
             (
                 steer_circle,
+                bubble_wobble,
                 scroll_cave_segments,
                 detect_wall_collision,
                 update_depth_ui,
@@ -499,6 +500,15 @@ fn steer_circle(
             .clamp(-HORIZONTAL_MAX_SPEED, HORIZONTAL_MAX_SPEED);
         velocity.0 *= damping;
         transform.translation.x += velocity.0 * time.delta_secs();
+    }
+}
+
+fn bubble_wobble(mut query: Query<(&HorizontalVelocity, &mut Transform), With<RisingCircle>>) {
+    for (velocity, mut transform) in &mut query {
+        let stretch = (velocity.0.abs() / HORIZONTAL_MAX_SPEED) * 0.35;
+        let scale_x = 1.0 + stretch;
+        let scale_y = 1.0 / scale_x;
+        transform.scale = Vec3::new(scale_x, scale_y, 1.0);
     }
 }
 
