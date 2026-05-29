@@ -98,16 +98,16 @@ struct UiTheme {
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
-            menu_backdrop: Color::srgba(0.0, 0.588, 0.722, 0.88),
-            panel_fill: Color::srgba(0.0, 0.702, 0.667, 0.82),
-            panel_shadow: Color::srgba(0.0, 0.588, 0.722, 0.45),
-            text_primary: Color::linear_rgba(0.89, 0.969, 0.949, 1.0),
-            text_secondary: Color::linear_rgba(0.624, 0.898, 0.878, 1.0),
-            hud_panel: Color::srgba(0.0, 0.702, 0.667, 0.58),
-            button_fill: Color::srgb(0.95, 0.92, 0.84),
-            button_hover: Color::srgb(0.98, 0.95, 0.87),
-            button_pressed: Color::srgb(0.89, 0.86, 0.77),
-            button_text: Color::srgb(0.0, 0.588, 0.722),
+            menu_backdrop: Color::srgba(0.149, 0.294, 0.412, 0.88), // astronaut
+            panel_fill: Color::srgba(0.239, 0.451, 0.522, 0.86),    // ming
+            panel_shadow: Color::srgba(0.149, 0.294, 0.412, 0.48),  // astronaut
+            text_primary: Color::linear_rgba(0.631, 0.773, 0.808, 1.0), // casper
+            text_secondary: Color::linear_rgba(0.525, 0.729, 0.757, 1.0), // neptune
+            hud_panel: Color::srgba(0.345, 0.557, 0.655, 0.62),     // horizon
+            button_fill: Color::srgb(0.631, 0.773, 0.808),          // casper
+            button_hover: Color::srgb(0.525, 0.729, 0.757),         // neptune
+            button_pressed: Color::srgb(0.345, 0.557, 0.655),       // horizon
+            button_text: Color::srgb(0.149, 0.294, 0.412),          // astronaut
         }
     }
 }
@@ -159,7 +159,7 @@ fn main() {
             }),
             ..default()
         }))
-        .insert_resource(ClearColor(Color::srgb(0.0, 0.588, 0.722)))
+        .insert_resource(ClearColor(Color::srgb(0.149, 0.294, 0.412)))
         .init_state::<GameState>()
         .init_resource::<CaveGeneration>()
         .init_resource::<DepthState>()
@@ -204,8 +204,8 @@ fn setup(
     asset_server: Res<AssetServer>,
     ui_theme: Res<UiTheme>,
 ) {
-    let poppins_regular = asset_server.load("fonts/Poppins-Regular.ttf");
-    let poppins_semibold = asset_server.load("fonts/Poppins-SemiBold.ttf");
+    let comic_bold = asset_server.load("fonts/ComicNeue-Bold.ttf");
+    let comic_bold_italic = asset_server.load("fonts/ComicNeue-BoldItalic.ttf");
 
     commands.spawn((
         Camera2d,
@@ -291,7 +291,7 @@ fn setup(
                         Text::new("You Popped!"),
                         TextFont {
                             font_size: 38.0,
-                            font: poppins_semibold.clone(),
+                            font: comic_bold.clone(),
                             ..default()
                         },
                         TextColor(ui_theme.text_primary),
@@ -300,7 +300,7 @@ fn setup(
                         Text::new("Depth: 0m"),
                         TextFont {
                             font_size: 38.0,
-                            font: poppins_regular.clone(),
+                            font: comic_bold.clone(),
                             ..default()
                         },
                         TextColor(ui_theme.text_primary),
@@ -336,7 +336,7 @@ fn setup(
                                     Text::new("Restart"),
                                     TextFont {
                                         font_size: 24.0,
-                                        font: poppins_semibold.clone(),
+                                        font: comic_bold.clone(),
                                         ..default()
                                     },
                                     TextColor(ui_theme.button_text),
@@ -345,7 +345,7 @@ fn setup(
                                     Text::new("or press R"),
                                     TextFont {
                                         font_size: 14.0,
-                                        font: poppins_regular.clone(),
+                                        font: comic_bold.clone(),
                                         ..default()
                                     },
                                     TextColor(ui_theme.button_text),
@@ -371,7 +371,7 @@ fn setup(
                             Text::new("Main Menu"),
                             TextFont {
                                 font_size: 24.0,
-                                font: poppins_semibold.clone(),
+                                font: comic_bold.clone(),
                                 ..default()
                             },
                             TextColor(ui_theme.button_text),
@@ -413,7 +413,7 @@ fn setup(
                     border_radius: BorderRadius::MAX,
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.624, 0.898, 0.878, 0.28)),
+                BackgroundColor(Color::srgba(0.525, 0.729, 0.757, 0.26)),
                 MenuBubble {
                     top_px,
                     speed,
@@ -459,14 +459,51 @@ fn setup(
                 ))
                 .with_children(|card| {
                     card.spawn((
-                        Text::new("PRESSURIZED"),
-                        TextFont {
-                            font_size: 72.0,
-                            font: poppins_semibold.clone(),
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            column_gap: Val::Px(14.0),
                             ..default()
                         },
-                        TextColor(ui_theme.text_primary),
-                    ));
+                    ))
+                    .with_children(|title_row| {
+                        title_row
+                            .spawn((
+                                Node {
+                                    width: Val::Px(32.0),
+                                    height: Val::Px(32.0),
+                                    border_radius: BorderRadius::MAX,
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgba(0.631, 0.773, 0.808, 0.95)),
+                            ))
+                            .with_children(|bubble| {
+                                bubble.spawn((
+                                    Node {
+                                        width: Val::Px(10.0),
+                                        height: Val::Px(10.0),
+                                        border_radius: BorderRadius::MAX,
+                                        position_type: PositionType::Absolute,
+                                        top: Val::Px(4.0),
+                                        left: Val::Px(6.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgba(0.89, 0.969, 0.949, 0.85)),
+                                ));
+                            });
+                        title_row.spawn((
+                            Text::new("PRESSURIZED"),
+                            TextFont {
+                                font_size: 72.0,
+                                font: comic_bold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.text_primary),
+                        ));
+                    });
                     card.spawn((
                         Button,
                         Node {
@@ -483,10 +520,10 @@ fn setup(
                     ))
                     .with_children(|button| {
                         button.spawn((
-                            Text::new("Start Dive"),
+                            Text::new("Play"),
                             TextFont {
                                 font_size: 24.0,
-                                font: poppins_semibold.clone(),
+                                font: comic_bold.clone(),
                                 ..default()
                             },
                             TextColor(ui_theme.button_text),
@@ -511,7 +548,7 @@ fn setup(
                             Text::new("How to Play"),
                             TextFont {
                                 font_size: 22.0,
-                                font: poppins_semibold.clone(),
+                                font: comic_bold.clone(),
                                 ..default()
                             },
                             TextColor(ui_theme.button_text),
@@ -521,7 +558,16 @@ fn setup(
                         Text::new("or press SPACE"),
                         TextFont {
                             font_size: 18.0,
-                            font: poppins_regular.clone(),
+                            font: comic_bold.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_secondary),
+                    ));
+                    card.spawn((
+                        Text::new("This game will cost you a $499/mo subscription soon so enjoy will it lasts..."),
+                        TextFont {
+                            font_size: 13.0,
+                            font: comic_bold_italic.clone(),
                             ..default()
                         },
                         TextColor(ui_theme.text_secondary),
@@ -539,7 +585,7 @@ fn setup(
                     align_items: AlignItems::Center,
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.0, 0.588, 0.722, 0.35)),
+                BackgroundColor(Color::srgb(0.149, 0.294, 0.412)),
                 HowToModal,
                 Visibility::Hidden,
             ))
@@ -547,8 +593,8 @@ fn setup(
                 overlay
                     .spawn((
                         Node {
-                            width: Val::Px(560.0),
-                            height: Val::Px(300.0),
+                            width: Val::Px(540.0),
+                            height: Val::Px(280.0),
                             justify_content: JustifyContent::FlexStart,
                             align_items: AlignItems::FlexStart,
                             flex_direction: FlexDirection::Column,
@@ -557,7 +603,7 @@ fn setup(
                             border_radius: BorderRadius::all(Val::Px(18.0)),
                             ..default()
                         },
-                        BackgroundColor(Color::srgb(0.0, 0.702, 0.667)),
+                        BackgroundColor(Color::srgb(0.239, 0.451, 0.522)),
                     ))
                     .with_children(|modal| {
                         modal.spawn((
@@ -581,7 +627,7 @@ fn setup(
                                 Text::new("X"),
                                 TextFont {
                                     font_size: 20.0,
-                                    font: poppins_semibold.clone(),
+                                    font: comic_bold.clone(),
                                     ..default()
                                 },
                                 TextColor(ui_theme.button_text),
@@ -592,16 +638,16 @@ fn setup(
                             Text::new("How to Play"),
                             TextFont {
                                 font_size: 30.0,
-                                font: poppins_semibold.clone(),
+                                font: comic_bold.clone(),
                                 ..default()
                             },
                             TextColor(ui_theme.text_primary),
                         ));
                         modal.spawn((
-                            Text::new("1. Click Start Dive (or press SPACE)."),
+                            Text::new("1. Click Play (or press SPACE)."),
                             TextFont {
                                 font_size: 20.0,
-                                font: poppins_regular.clone(),
+                                font: comic_bold.clone(),
                                 ..default()
                             },
                             TextColor(ui_theme.text_secondary),
@@ -610,7 +656,7 @@ fn setup(
                             Text::new("2. Use LEFT/RIGHT arrows to steer the bubble."),
                             TextFont {
                                 font_size: 20.0,
-                                font: poppins_regular.clone(),
+                                font: comic_bold.clone(),
                                 ..default()
                             },
                             TextColor(ui_theme.text_secondary),
@@ -619,7 +665,7 @@ fn setup(
                             Text::new("3. Stay in the gap and go deeper."),
                             TextFont {
                                 font_size: 20.0,
-                                font: poppins_regular.clone(),
+                                font: comic_bold.clone(),
                                 ..default()
                             },
                             TextColor(ui_theme.text_secondary),
@@ -650,7 +696,7 @@ fn setup(
             Text::new("Depth: 0m"),
             TextFont {
                 font_size: 30.0,
-                font: poppins_regular,
+                font: comic_bold,
                 ..default()
             },
             TextColor(ui_theme.text_primary),
@@ -688,12 +734,12 @@ fn spawn_cave_segment(
         .with_children(|parent| {
             parent.spawn((
                 Mesh2d(meshes.add(Rectangle::new(left_wall_width, WALL_VISUAL_HEIGHT))),
-                MeshMaterial2d(materials.add(Color::srgb(0.36, 0.39, 0.42))),
+                MeshMaterial2d(materials.add(Color::srgb(0.239, 0.451, 0.522))),
                 Transform::from_xyz(left_wall_x, 0.0, 0.0),
             ));
             parent.spawn((
                 Mesh2d(meshes.add(Rectangle::new(right_wall_width, WALL_VISUAL_HEIGHT))),
-                MeshMaterial2d(materials.add(Color::srgb(0.36, 0.39, 0.42))),
+                MeshMaterial2d(materials.add(Color::srgb(0.239, 0.451, 0.522))),
                 Transform::from_xyz(right_wall_x, 0.0, 0.0),
             ));
 
@@ -710,7 +756,7 @@ fn spawn_cave_segment(
                         Vec2::new(0.0, TOOTH_HEIGHT * 0.5),
                         Vec2::new(TOOTH_DEPTH, 0.0),
                     ))),
-                    MeshMaterial2d(materials.add(Color::srgb(0.36, 0.39, 0.42))),
+                    MeshMaterial2d(materials.add(Color::srgb(0.239, 0.451, 0.522))),
                     Transform::from_xyz(left_gap_edge, offset_y, 0.0),
                 ));
                 parent.spawn((
@@ -719,7 +765,7 @@ fn spawn_cave_segment(
                         Vec2::new(0.0, TOOTH_HEIGHT * 0.5),
                         Vec2::new(-TOOTH_DEPTH, 0.0),
                     ))),
-                    MeshMaterial2d(materials.add(Color::srgb(0.36, 0.39, 0.42))),
+                    MeshMaterial2d(materials.add(Color::srgb(0.239, 0.451, 0.522))),
                     Transform::from_xyz(right_gap_edge, offset_y, 0.0),
                 ));
             }
@@ -907,9 +953,9 @@ fn enter_game_over(
             let velocity = Vec2::new(angle.cos(), angle.sin()) * speed;
             let start_alpha = fastrand::f32() * 0.4 + 0.5;
             let base_color = Vec3::new(
-                0.114 + fastrand::f32() * 0.51,
-                0.843 + fastrand::f32() * 0.055,
-                0.784 + fastrand::f32() * 0.094,
+                0.525 + fastrand::f32() * 0.106, // neptune -> casper range
+                0.729 + fastrand::f32() * 0.044,
+                0.757 + fastrand::f32() * 0.051,
             );
 
             commands.spawn((
