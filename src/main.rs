@@ -223,7 +223,7 @@ fn setup(
     );
     commands.spawn((
         Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS))),
-        MeshMaterial2d(materials.add(Color::linear_rgba(1.2, 1.6, 1.85, 0.75))),
+        MeshMaterial2d(materials.add(Color::srgba(0.631, 0.773, 0.808, 0.82))),
         Transform::from_translation(BUBBLE_START),
         RisingCircle,
         HorizontalVelocity::default(),
@@ -233,7 +233,7 @@ fn setup(
     .with_children(|parent| {
         parent.spawn((
             Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS * 0.3))),
-            MeshMaterial2d(materials.add(Color::linear_rgba(1.9, 2.0, 2.0, 0.95))),
+            MeshMaterial2d(materials.add(Color::srgba(0.89, 0.969, 0.949, 0.9))),
             Transform::from_xyz(-BUBBLE_RADIUS * 0.25, BUBBLE_RADIUS * 0.25, 0.1),
         ));
     });
@@ -388,8 +388,7 @@ fn setup(
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             flex_direction: FlexDirection::Column,
-            padding: UiRect::top(Val::Percent(18.0)),
-            row_gap: Val::Px(22.0),
+            row_gap: Val::Px(0.0),
             ..default()
         },
         BackgroundColor(ui_theme.menu_backdrop),
@@ -508,7 +507,7 @@ fn setup(
                         Button,
                         Node {
                             width: Val::Px(280.0),
-                            height: Val::Px(56.0),
+                            height: Val::Px(72.0),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             border_radius: BorderRadius::all(Val::Px(14.0)),
@@ -519,15 +518,36 @@ fn setup(
                         MenuStartButton,
                     ))
                     .with_children(|button| {
-                        button.spawn((
-                            Text::new("Play"),
-                            TextFont {
-                                font_size: 24.0,
-                                font: comic_bold.clone(),
-                                ..default()
-                            },
-                            TextColor(ui_theme.button_text),
-                        ));
+                        button
+                            .spawn((
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    row_gap: Val::Px(2.0),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|stack| {
+                                stack.spawn((
+                                    Text::new("Play"),
+                                    TextFont {
+                                        font_size: 24.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.button_text),
+                                ));
+                                stack.spawn((
+                                    Text::new("or press SPACE"),
+                                    TextFont {
+                                        font_size: 13.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.button_text),
+                                ));
+                            });
                     });
                     card.spawn((
                         Button,
@@ -554,15 +574,6 @@ fn setup(
                             TextColor(ui_theme.button_text),
                         ));
                     });
-                    card.spawn((
-                        Text::new("or press SPACE"),
-                        TextFont {
-                            font_size: 18.0,
-                            font: comic_bold.clone(),
-                            ..default()
-                        },
-                        TextColor(ui_theme.text_secondary),
-                    ));
                     card.spawn((
                         Text::new("This game will cost you a $499/mo subscription soon so enjoy will it lasts..."),
                         TextFont {
