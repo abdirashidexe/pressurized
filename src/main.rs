@@ -1,4 +1,6 @@
 use bevy::prelude::*;
+use bevy::post_process::bloom::Bloom;
+use bevy::render::view::Hdr;
 
 const SCREEN_WIDTH: f32 = 900.0;
 const SCREEN_HEIGHT: f32 = 600.0;
@@ -112,7 +114,14 @@ fn setup(
     let poppins_regular = asset_server.load("fonts/Poppins-Regular.ttf");
     let poppins_semibold = asset_server.load("fonts/Poppins-SemiBold.ttf");
 
-    commands.spawn(Camera2d);
+    commands.spawn((
+        Camera2d,
+        Hdr,
+        Bloom {
+            intensity: 0.08,
+            ..Bloom::default()
+        },
+    ));
     reset_and_spawn_cave(
         &mut commands,
         &mut meshes,
@@ -121,7 +130,7 @@ fn setup(
     );
     commands.spawn((
         Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS))),
-        MeshMaterial2d(materials.add(Color::srgba(0.6, 0.9, 1.0, 0.75))),
+        MeshMaterial2d(materials.add(Color::linear_rgba(1.2, 1.6, 1.85, 0.75))),
         Transform::from_translation(BUBBLE_START),
         RisingCircle,
         HorizontalVelocity::default(),
@@ -131,7 +140,7 @@ fn setup(
     .with_children(|parent| {
         parent.spawn((
             Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS * 0.3))),
-            MeshMaterial2d(materials.add(Color::WHITE)),
+            MeshMaterial2d(materials.add(Color::linear_rgba(1.9, 2.0, 2.0, 0.95))),
             Transform::from_xyz(-BUBBLE_RADIUS * 0.25, BUBBLE_RADIUS * 0.25, 0.1),
         ));
     });
@@ -169,7 +178,7 @@ fn setup(
                         font: poppins_semibold.clone(),
                         ..default()
                     },
-                    TextColor(Color::WHITE),
+                    TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
                 ));
                 panel.spawn((
                     Text::new("Depth: 0m"),
@@ -178,7 +187,7 @@ fn setup(
                         font: poppins_regular.clone(),
                         ..default()
                     },
-                    TextColor(Color::WHITE),
+                    TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
                     GameOverText,
                 ));
                 panel.spawn((
@@ -188,7 +197,7 @@ fn setup(
                         font: poppins_regular.clone(),
                         ..default()
                     },
-                    TextColor(Color::WHITE),
+                    TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
                 ));
             });
     });
@@ -215,7 +224,7 @@ fn setup(
                 font: poppins_semibold.clone(),
                 ..default()
             },
-            TextColor(Color::WHITE),
+            TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
         ));
         parent.spawn((
             Text::new("Press SPACE to begin"),
@@ -224,7 +233,7 @@ fn setup(
                 font: poppins_regular.clone(),
                 ..default()
             },
-            TextColor(Color::WHITE),
+            TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
         ));
     });
     commands.spawn((
@@ -234,7 +243,7 @@ fn setup(
             font: poppins_regular.clone(),
             ..default()
         },
-        TextColor(Color::WHITE),
+        TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
         Node {
             position_type: PositionType::Absolute,
             top: Val::Percent(5.0),
