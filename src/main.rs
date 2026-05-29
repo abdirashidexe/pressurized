@@ -74,13 +74,13 @@ struct UiTheme {
 impl Default for UiTheme {
     fn default() -> Self {
         Self {
-            menu_backdrop: Color::srgba(0.01, 0.01, 0.02, 0.9),
-            panel_fill: Color::srgba(0.04, 0.07, 0.16, 0.84),
-            panel_shadow: Color::srgba(0.0, 0.0, 0.0, 0.42),
-            text_primary: Color::linear_rgba(1.15, 1.15, 1.2, 1.0),
-            text_secondary: Color::linear_rgba(1.0, 1.05, 1.12, 1.0),
-            text_shadow: Color::srgba(0.0, 0.0, 0.02, 0.6),
-            hud_panel: Color::srgba(0.02, 0.05, 0.12, 0.62),
+            menu_backdrop: Color::srgba(0.0, 0.588, 0.722, 0.88),
+            panel_fill: Color::srgba(0.0, 0.702, 0.667, 0.82),
+            panel_shadow: Color::srgba(0.0, 0.588, 0.722, 0.45),
+            text_primary: Color::linear_rgba(0.89, 0.969, 0.949, 1.0),
+            text_secondary: Color::linear_rgba(0.624, 0.898, 0.878, 1.0),
+            text_shadow: Color::srgba(0.0, 0.702, 0.667, 0.5),
+            hud_panel: Color::srgba(0.0, 0.702, 0.667, 0.58),
         }
     }
 }
@@ -132,7 +132,7 @@ fn main() {
             }),
             ..default()
         }))
-        .insert_resource(ClearColor(Color::srgb(0.04, 0.04, 0.12)))
+        .insert_resource(ClearColor(Color::srgb(0.0, 0.588, 0.722)))
         .init_state::<GameState>()
         .init_resource::<CaveGeneration>()
         .init_resource::<DepthState>()
@@ -318,7 +318,7 @@ fn setup(
                     border_radius: BorderRadius::MAX,
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.75, 0.9, 1.0, 0.22)),
+                BackgroundColor(Color::srgba(0.624, 0.898, 0.878, 0.28)),
                 MenuBubble {
                     top_px,
                     speed,
@@ -458,12 +458,12 @@ fn spawn_cave_segment(
         .with_children(|parent| {
             parent.spawn((
                 Mesh2d(meshes.add(Rectangle::new(left_wall_width, WALL_VISUAL_HEIGHT))),
-                MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
+                MeshMaterial2d(materials.add(Color::srgb(0.36, 0.39, 0.42))),
                 Transform::from_xyz(left_wall_x, 0.0, 0.0),
             ));
             parent.spawn((
                 Mesh2d(meshes.add(Rectangle::new(right_wall_width, WALL_VISUAL_HEIGHT))),
-                MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
+                MeshMaterial2d(materials.add(Color::srgb(0.36, 0.39, 0.42))),
                 Transform::from_xyz(right_wall_x, 0.0, 0.0),
             ));
 
@@ -480,7 +480,7 @@ fn spawn_cave_segment(
                         Vec2::new(0.0, TOOTH_HEIGHT * 0.5),
                         Vec2::new(TOOTH_DEPTH, 0.0),
                     ))),
-                    MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
+                    MeshMaterial2d(materials.add(Color::srgb(0.36, 0.39, 0.42))),
                     Transform::from_xyz(left_gap_edge, offset_y, 0.0),
                 ));
                 parent.spawn((
@@ -489,7 +489,7 @@ fn spawn_cave_segment(
                         Vec2::new(0.0, TOOTH_HEIGHT * 0.5),
                         Vec2::new(-TOOTH_DEPTH, 0.0),
                     ))),
-                    MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
+                    MeshMaterial2d(materials.add(Color::srgb(0.36, 0.39, 0.42))),
                     Transform::from_xyz(right_gap_edge, offset_y, 0.0),
                 ));
             }
@@ -664,7 +664,11 @@ fn enter_game_over(
             let speed = fastrand::f32() * 200.0 + 80.0;
             let velocity = Vec2::new(angle.cos(), angle.sin()) * speed;
             let start_alpha = fastrand::f32() * 0.4 + 0.5;
-            let base_color = Vec3::new(0.55 + fastrand::f32() * 0.1, 0.85 + fastrand::f32() * 0.1, 1.0);
+            let base_color = Vec3::new(
+                0.114 + fastrand::f32() * 0.51,
+                0.843 + fastrand::f32() * 0.055,
+                0.784 + fastrand::f32() * 0.094,
+            );
 
             commands.spawn((
                 Mesh2d(meshes.add(Circle::new(radius))),
