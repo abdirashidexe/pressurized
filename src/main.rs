@@ -25,8 +25,9 @@ const POP_PARTICLE_LIFETIME: f32 = 0.5;
 const SCREEN_SHAKE_MAX_OFFSET: f32 = 18.0;
 const SCREEN_SHAKE_DURATION: f32 = 0.3;
 const MENU_BUBBLE_COUNT: u32 = 20;
+const FADE_DURATION: f32 = 0.18;
 
-#[derive(States, Debug, Clone, Eq, PartialEq, Hash, Default)]
+#[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
     #[default]
     Menu,
@@ -149,6 +150,45 @@ struct ScreenShake {
     elapsed_secs: f32,
 }
 
+#[derive(Component)]
+struct FadeOverlay;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FadePhase {
+    FadeOut,
+    FadeIn,
+}
+
+struct FadeTransitionActive {
+    phase: FadePhase,
+    target: GameState,
+    elapsed: f32,
+}
+
+#[derive(Resource, Default)]
+struct FadeTransition {
+    active: Option<FadeTransitionActive>,
+}
+
+fn fade_transition_active(fade: Res<FadeTransition>) -> bool {
+    fade.active.is_some()
+}
+
+fn gameplay_allowed(state: Res<State<GameState>>, fade: Res<FadeTransition>) -> bool {
+    *state.get() == GameState::Playing && fade.active.is_none()
+}
+
+fn request_game_state_change(fade: &mut FadeTransition, target: GameState) {
+    if fade.active.is_some() {
+        return;
+    }
+    fade.active = Some(FadeTransitionActive {
+        phase: FadePhase::FadeOut,
+        target,
+        elapsed: 0.0,
+    });
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -165,6 +205,7 @@ fn main() {
         .init_resource::<DepthState>()
         .init_resource::<RunState>()
         .init_resource::<ScreenShake>()
+        .init_resource::<FadeTransition>()
         .init_resource::<UiTheme>()
         .add_systems(Startup, setup)
         .add_systems(OnEnter(GameState::Menu), enter_menu)
@@ -179,16 +220,34 @@ fn main() {
                 detect_wall_collision,
                 update_depth_ui,
             )
-                .run_if(in_state(GameState::Playing)),
+                .run_if(gameplay_allowed),
         )
-        .add_systems(Update, menu_input.run_if(in_state(GameState::Menu)))
-        .add_systems(Update, menu_button_input.run_if(in_state(GameState::Menu)))
+        .add_systems(Update, update_fade_transition)
+        .add_systems(
+            Update,
+            menu_input.run_if(in_state(GameState::Menu).and(not(fade_transition_active))),
+        )
+        .add_systems(
+            Update,
+            menu_button_input.run_if(in_state(GameState::Menu).and(not(fade_transition_active))),
+        )
         .add_systems(Update, menu_how_to_button_input.run_if(in_state(GameState::Menu)))
         .add_systems(Update, menu_close_how_to_button_input.run_if(in_state(GameState::Menu)))
         .add_systems(Update, update_menu_bubbles.run_if(in_state(GameState::Menu)))
-        .add_systems(Update, game_over_input.run_if(in_state(GameState::GameOver)))
-        .add_systems(Update, game_over_button_input.run_if(in_state(GameState::GameOver)))
-        .add_systems(Update, game_over_menu_button_input.run_if(in_state(GameState::GameOver)))
+        .add_systems(
+            Update,
+            game_over_input.run_if(in_state(GameState::GameOver).and(not(fade_transition_active))),
+        )
+        .add_systems(
+            Update,
+            game_over_button_input
+                .run_if(in_state(GameState::GameOver).and(not(fade_transition_active))),
+        )
+        .add_systems(
+            Update,
+            game_over_menu_button_input
+                .run_if(in_state(GameState::GameOver).and(not(fade_transition_active))),
+        )
         .add_systems(
             Update,
             (update_pop_particles, update_screen_shake).run_if(in_state(GameState::GameOver)),
@@ -714,6 +773,62 @@ fn setup(
             DepthHudValue,
         ));
     });
+    commands.spawn((
+        FadeOverlay,
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            ..default()
+        },
+        ZIndex(1000),
+        Visibility::Hidden,
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.0)),
+    ));
+}
+
+fn update_fade_transition(
+    time: Res<Time>,
+    mut fade: ResMut<FadeTransition>,
+    mut overlay_query: Query<(&mut BackgroundColor, &mut Visibility), With<FadeOverlay>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    let Ok((mut overlay_color, mut overlay_visibility)) = overlay_query.single_mut() else {
+        return;
+    };
+
+    let Some(active) = fade.active.as_mut() else {
+        *overlay_visibility = Visibility::Hidden;
+        overlay_color.0 = Color::srgba(0.0, 0.0, 0.0, 0.0);
+        return;
+    };
+
+    *overlay_visibility = Visibility::Visible;
+
+    active.elapsed += time.delta_secs();
+    let t = (active.elapsed / FADE_DURATION).min(1.0);
+
+    let alpha = match active.phase {
+        FadePhase::FadeOut => t,
+        FadePhase::FadeIn => 1.0 - t,
+    };
+
+    overlay_color.0 = Color::srgba(0.0, 0.0, 0.0, alpha);
+
+    if t < 1.0 {
+        return;
+    }
+
+    if active.phase == FadePhase::FadeOut {
+        next_state.set(active.target);
+        active.phase = FadePhase::FadeIn;
+        active.elapsed = 0.0;
+        return;
+    }
+
+    fade.active = None;
+    *overlay_visibility = Visibility::Hidden;
+    overlay_color.0 = Color::srgba(0.0, 0.0, 0.0, 0.0);
 }
 
 fn spawn_cave_segment(
@@ -910,6 +1025,7 @@ fn enter_playing(
 
     if let Ok((mut transform, mut velocity)) = bubble_query.single_mut() {
         transform.translation = BUBBLE_START;
+        transform.scale = Vec3::ONE;
         velocity.0 = 0.0;
     }
     if let Ok(mut depth_hud_text) = depth_hud_query.single_mut() {
@@ -990,9 +1106,12 @@ fn enter_game_over(
     }
 }
 
-fn menu_input(keyboard: Res<ButtonInput<KeyCode>>, mut next_state: ResMut<NextState<GameState>>) {
+fn menu_input(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut fade: ResMut<FadeTransition>,
+) {
     if keyboard.just_pressed(KeyCode::Space) {
-        next_state.set(GameState::Playing);
+        request_game_state_change(fade.as_mut(), GameState::Playing);
     }
 }
 
@@ -1001,14 +1120,14 @@ fn menu_button_input(
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>, With<MenuStartButton>),
     >,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut fade: ResMut<FadeTransition>,
     ui_theme: Res<UiTheme>,
 ) {
     for (interaction, mut color) in &mut query {
         match *interaction {
             Interaction::Pressed => {
                 *color = BackgroundColor(ui_theme.button_pressed);
-                next_state.set(GameState::Playing);
+                request_game_state_change(fade.as_mut(), GameState::Playing);
             }
             Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
             Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
@@ -1073,10 +1192,10 @@ fn update_menu_bubbles(time: Res<Time>, mut query: Query<(&mut Node, &mut MenuBu
 
 fn game_over_input(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut fade: ResMut<FadeTransition>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyR) {
-        next_state.set(GameState::Playing);
+        request_game_state_change(fade.as_mut(), GameState::Playing);
     }
 }
 
@@ -1085,14 +1204,14 @@ fn game_over_button_input(
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>, With<RestartButton>),
     >,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut fade: ResMut<FadeTransition>,
     ui_theme: Res<UiTheme>,
 ) {
     for (interaction, mut color) in &mut query {
         match *interaction {
             Interaction::Pressed => {
                 *color = BackgroundColor(ui_theme.button_pressed);
-                next_state.set(GameState::Playing);
+                request_game_state_change(fade.as_mut(), GameState::Playing);
             }
             Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
             Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
@@ -1105,14 +1224,14 @@ fn game_over_menu_button_input(
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>, With<MainMenuButton>),
     >,
-    mut next_state: ResMut<NextState<GameState>>,
+    mut fade: ResMut<FadeTransition>,
     ui_theme: Res<UiTheme>,
 ) {
     for (interaction, mut color) in &mut query {
         match *interaction {
             Interaction::Pressed => {
                 *color = BackgroundColor(ui_theme.button_pressed);
-                next_state.set(GameState::Menu);
+                request_game_state_change(fade.as_mut(), GameState::Menu);
             }
             Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
             Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
