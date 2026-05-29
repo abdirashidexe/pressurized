@@ -76,6 +76,7 @@ fn main() {
             }),
             ..default()
         }))
+        .insert_resource(ClearColor(Color::srgb(0.04, 0.04, 0.12)))
         .init_state::<GameState>()
         .init_resource::<CaveGeneration>()
         .init_resource::<DepthState>()
@@ -114,13 +115,20 @@ fn setup(
     );
     commands.spawn((
         Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS))),
-        MeshMaterial2d(materials.add(Color::WHITE)),
+        MeshMaterial2d(materials.add(Color::srgba(0.6, 0.9, 1.0, 0.75))),
         Transform::from_translation(BUBBLE_START),
         RisingCircle,
         HorizontalVelocity::default(),
         GameplayEntity,
         Visibility::Visible,
-    ));
+    ))
+    .with_children(|parent| {
+        parent.spawn((
+            Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS * 0.3))),
+            MeshMaterial2d(materials.add(Color::WHITE)),
+            Transform::from_xyz(-BUBBLE_RADIUS * 0.25, BUBBLE_RADIUS * 0.25, 0.1),
+        ));
+    });
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
@@ -143,7 +151,7 @@ fn setup(
                     align_items: AlignItems::Center,
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.02, 0.02, 0.02, 0.78)),
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.1, 0.88)),
             ))
             .with_children(|panel| {
                 panel.spawn((
@@ -190,7 +198,7 @@ fn setup(
                 font_size: 34.0,
                 ..default()
             },
-            TextColor(Color::srgb(0.82, 0.85, 0.9)),
+            TextColor(Color::WHITE),
         ));
     });
     commands.spawn((
@@ -241,12 +249,12 @@ fn spawn_cave_segment(
         .with_children(|parent| {
             parent.spawn((
                 Mesh2d(meshes.add(Rectangle::new(left_wall_width, SEGMENT_HEIGHT))),
-                MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
+                MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
                 Transform::from_xyz(left_wall_x, 0.0, 0.0),
             ));
             parent.spawn((
                 Mesh2d(meshes.add(Rectangle::new(right_wall_width, SEGMENT_HEIGHT))),
-                MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
+                MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
                 Transform::from_xyz(right_wall_x, 0.0, 0.0),
             ));
         });
