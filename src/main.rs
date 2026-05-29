@@ -27,7 +27,24 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
+    let screen_width = 900.0;
+    let screen_height = 600.0;
+    let gap_width = screen_width * 0.5;
+    let wall_width = (screen_width - gap_width) * 0.5;
+    let left_wall_x = -(gap_width * 0.5 + wall_width * 0.5);
+    let right_wall_x = gap_width * 0.5 + wall_width * 0.5;
+
     commands.spawn(Camera2d);
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(wall_width, screen_height))),
+        MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
+        Transform::from_xyz(left_wall_x, 0.0, 0.0),
+    ));
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(wall_width, screen_height))),
+        MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
+        Transform::from_xyz(right_wall_x, 0.0, 0.0),
+    ));
     commands.spawn((
         Mesh2d(meshes.add(Circle::new(30.0))),
         MeshMaterial2d(materials.add(Color::WHITE)),
