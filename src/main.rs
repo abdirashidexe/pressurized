@@ -264,6 +264,7 @@ fn setup(
                     top: Val::Px(top_px),
                     width: Val::Px(size),
                     height: Val::Px(size),
+                    border_radius: BorderRadius::MAX,
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.75, 0.9, 1.0, 0.22)),
