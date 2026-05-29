@@ -19,6 +19,10 @@ const HORIZONTAL_ACCELERATION: f32 = 900.0;
 const HORIZONTAL_MAX_SPEED: f32 = 420.0;
 const TOOTH_DEPTH: f32 = 35.0;
 const TOOTH_HEIGHT: f32 = SEGMENT_HEIGHT * 0.5;
+const POP_PARTICLE_COUNT: u32 = 16;
+const POP_PARTICLE_LIFETIME: f32 = 0.5;
+const SCREEN_SHAKE_MAX_OFFSET: f32 = 18.0;
+const SCREEN_SHAKE_DURATION: f32 = 0.3;
 
 #[derive(States, Debug, Clone, Eq, PartialEq, Hash, Default)]
 enum GameState {
@@ -54,6 +58,14 @@ struct GameOverUi;
 #[derive(Component)]
 struct GameOverText;
 
+#[derive(Component)]
+struct PopParticle {
+    velocity: Vec2,
+    remaining: f32,
+    base_color: Vec3,
+    start_alpha: f32,
+}
+
 #[derive(Resource, Default)]
 struct CaveGeneration {
     last_gap_center_x: f32,
@@ -68,6 +80,12 @@ struct DepthState {
 #[derive(Resource, Default)]
 struct RunState {
     time_alive_secs: f32,
+}
+
+#[derive(Resource, Default)]
+struct ScreenShake {
+    trauma: f32,
+    elapsed_secs: f32,
 }
 
 fn main() {
@@ -85,6 +103,7 @@ fn main() {
         .init_resource::<CaveGeneration>()
         .init_resource::<DepthState>()
         .init_resource::<RunState>()
+        .init_resource::<ScreenShake>()
         .add_systems(Startup, setup)
         .add_systems(OnEnter(GameState::Menu), enter_menu)
         .add_systems(OnEnter(GameState::Playing), enter_playing)
@@ -102,6 +121,10 @@ fn main() {
         )
         .add_systems(Update, menu_input.run_if(in_state(GameState::Menu)))
         .add_systems(Update, game_over_input.run_if(in_state(GameState::GameOver)))
+        .add_systems(
+            Update,
+            (update_pop_particles, update_screen_shake).run_if(in_state(GameState::GameOver)),
+        )
         .run();
 }
 
@@ -401,6 +424,7 @@ fn enter_playing(
     mut cave_generation: ResMut<CaveGeneration>,
     mut depth_state: ResMut<DepthState>,
     mut run_state: ResMut<RunState>,
+    mut screen_shake: ResMut<ScreenShake>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut gameplay_query: Query<
@@ -415,11 +439,19 @@ fn enter_playing(
         &mut Visibility,
         (With<GameOverUi>, Without<GameplayEntity>, Without<MenuUi>),
     >,
-    mut bubble_query: Query<(&mut Transform, &mut HorizontalVelocity), With<RisingCircle>>,
+    mut camera_query: Query<&mut Transform, (With<Camera2d>, Without<RisingCircle>)>,
+    mut bubble_query: Query<
+        (&mut Transform, &mut HorizontalVelocity),
+        (With<RisingCircle>, Without<Camera2d>),
+    >,
     segment_query: Query<Entity, With<CaveSegment>>,
+    particle_query: Query<Entity, With<PopParticle>>,
     mut depth_hud_query: Query<&mut Text, With<DepthHud>>,
 ) {
     for entity in &segment_query {
+        commands.entity(entity).despawn();
+    }
+    for entity in &particle_query {
         commands.entity(entity).despawn();
     }
     reset_and_spawn_cave(
@@ -439,6 +471,12 @@ fn enter_playing(
 
     depth_state.pixels_scrolled = 0.0;
     run_state.time_alive_secs = 0.0;
+    screen_shake.trauma = 0.0;
+    screen_shake.elapsed_secs = 0.0;
+    if let Ok(mut camera_transform) = camera_query.single_mut() {
+        camera_transform.translation.x = 0.0;
+        camera_transform.translation.y = 0.0;
+    }
 
     for mut visibility in &mut gameplay_query {
         *visibility = Visibility::Visible;
@@ -452,14 +490,52 @@ fn enter_playing(
 }
 
 fn enter_game_over(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut screen_shake: ResMut<ScreenShake>,
     mut game_over_query: Query<&mut Visibility, (With<GameOverUi>, Without<DepthHud>)>,
     mut depth_hud_query: Query<&mut Visibility, (With<DepthHud>, Without<GameOverUi>)>,
+    bubble_query: Query<&Transform, With<RisingCircle>>,
 ) {
     if let Ok(mut game_over_visibility) = game_over_query.single_mut() {
         *game_over_visibility = Visibility::Visible;
     }
     if let Ok(mut depth_hud_visibility) = depth_hud_query.single_mut() {
         *depth_hud_visibility = Visibility::Hidden;
+    }
+
+    screen_shake.trauma = 1.0;
+    screen_shake.elapsed_secs = 0.0;
+
+    if let Ok(bubble_transform) = bubble_query.single() {
+        let origin = bubble_transform.translation;
+        for _ in 0..POP_PARTICLE_COUNT {
+            let radius = fastrand::f32() * 4.0 + 4.0;
+            let angle = fastrand::f32() * std::f32::consts::TAU;
+            let speed = fastrand::f32() * 200.0 + 80.0;
+            let velocity = Vec2::new(angle.cos(), angle.sin()) * speed;
+            let start_alpha = fastrand::f32() * 0.4 + 0.5;
+            let base_color = Vec3::new(0.55 + fastrand::f32() * 0.1, 0.85 + fastrand::f32() * 0.1, 1.0);
+
+            commands.spawn((
+                Mesh2d(meshes.add(Circle::new(radius))),
+                MeshMaterial2d(materials.add(Color::srgba(
+                    base_color.x,
+                    base_color.y,
+                    base_color.z,
+                    start_alpha,
+                ))),
+                Transform::from_xyz(origin.x, origin.y, 0.2),
+                PopParticle {
+                    velocity,
+                    remaining: POP_PARTICLE_LIFETIME,
+                    base_color,
+                    start_alpha,
+                },
+                GameplayEntity,
+            ));
+        }
     }
 }
 
@@ -475,6 +551,67 @@ fn game_over_input(
 ) {
     if keyboard.just_pressed(KeyCode::KeyR) {
         next_state.set(GameState::Playing);
+    }
+}
+
+fn update_pop_particles(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut particles: Query<(Entity, &mut Transform, &MeshMaterial2d<ColorMaterial>, &mut PopParticle)>,
+) {
+    let dt = time.delta_secs();
+
+    for (entity, mut transform, material_handle, mut particle) in &mut particles {
+        particle.remaining -= dt;
+        if particle.remaining <= 0.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+
+        transform.translation.x += particle.velocity.x * dt;
+        transform.translation.y += particle.velocity.y * dt;
+
+        let alpha = particle.start_alpha * (particle.remaining / POP_PARTICLE_LIFETIME);
+        if let Some(material) = materials.get_mut(&material_handle.0) {
+            material.color = Color::srgba(
+                particle.base_color.x,
+                particle.base_color.y,
+                particle.base_color.z,
+                alpha.max(0.0),
+            );
+        }
+    }
+}
+
+fn update_screen_shake(
+    time: Res<Time>,
+    mut screen_shake: ResMut<ScreenShake>,
+    mut camera_query: Query<&mut Transform, With<Camera2d>>,
+) {
+    let Ok(mut camera_transform) = camera_query.single_mut() else {
+        return;
+    };
+
+    if screen_shake.trauma <= 0.0 {
+        camera_transform.translation.x = 0.0;
+        camera_transform.translation.y = 0.0;
+        return;
+    }
+
+    screen_shake.elapsed_secs += time.delta_secs();
+    let decay = time.delta_secs() / SCREEN_SHAKE_DURATION;
+    screen_shake.trauma = (screen_shake.trauma - decay).max(0.0);
+
+    let shake_strength = screen_shake.trauma * screen_shake.trauma;
+    let offset_x = (fastrand::f32() * 2.0 - 1.0) * SCREEN_SHAKE_MAX_OFFSET * shake_strength;
+    let offset_y = (fastrand::f32() * 2.0 - 1.0) * SCREEN_SHAKE_MAX_OFFSET * shake_strength;
+    camera_transform.translation.x = offset_x;
+    camera_transform.translation.y = offset_y;
+
+    if screen_shake.trauma <= 0.0 {
+        camera_transform.translation.x = 0.0;
+        camera_transform.translation.y = 0.0;
     }
 }
 
@@ -562,6 +699,7 @@ fn detect_wall_collision(
     mut next_state: ResMut<NextState<GameState>>,
     depth_state: Res<DepthState>,
     bubble_query: Query<&Transform, With<RisingCircle>>,
+    mut bubble_visibility_query: Query<&mut Visibility, With<RisingCircle>>,
     segment_query: Query<(&Transform, &CaveSegment)>,
     mut game_over_depth_query: Query<&mut Text, With<GameOverText>>,
 ) {
@@ -589,6 +727,9 @@ fn detect_wall_collision(
     let hit_right_wall = bubble_x + BUBBLE_RADIUS >= right_inner_edge;
 
     if hit_left_wall || hit_right_wall {
+        if let Ok(mut bubble_visibility) = bubble_visibility_query.single_mut() {
+            *bubble_visibility = Visibility::Hidden;
+        }
         if let Ok(mut game_over_depth_text) = game_over_depth_query.single_mut() {
             let depth_meters = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
             *game_over_depth_text = Text::new(format!("Depth: {}m", depth_meters));
