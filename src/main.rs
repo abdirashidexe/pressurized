@@ -307,19 +307,10 @@ fn setup(
                         GameOverText,
                     ));
                     card.spawn((
-                        Text::new("Press R to restart"),
-                        TextFont {
-                            font_size: 24.0,
-                            font: poppins_regular.clone(),
-                            ..default()
-                        },
-                        TextColor(ui_theme.text_secondary),
-                    ));
-                    card.spawn((
                         Button,
                         Node {
                             width: Val::Px(240.0),
-                            height: Val::Px(54.0),
+                            height: Val::Px(68.0),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             border_radius: BorderRadius::all(Val::Px(14.0)),
@@ -330,15 +321,36 @@ fn setup(
                         RestartButton,
                     ))
                     .with_children(|button| {
-                        button.spawn((
-                            Text::new("Restart"),
-                            TextFont {
-                                font_size: 24.0,
-                                font: poppins_semibold.clone(),
-                                ..default()
-                            },
-                            TextColor(ui_theme.button_text),
-                        ));
+                        button
+                            .spawn((
+                                Node {
+                                    flex_direction: FlexDirection::Column,
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    row_gap: Val::Px(2.0),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|stack| {
+                                stack.spawn((
+                                    Text::new("Restart"),
+                                    TextFont {
+                                        font_size: 24.0,
+                                        font: poppins_semibold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.button_text),
+                                ));
+                                stack.spawn((
+                                    Text::new("or press R"),
+                                    TextFont {
+                                        font_size: 14.0,
+                                        font: poppins_regular.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.button_text),
+                                ));
+                            });
                     });
                     card.spawn((
                         Button,
@@ -365,15 +377,6 @@ fn setup(
                             TextColor(ui_theme.button_text),
                         ));
                     });
-                    card.spawn((
-                        Text::new("or press R"),
-                        TextFont {
-                            font_size: 18.0,
-                            font: poppins_regular.clone(),
-                            ..default()
-                        },
-                        TextColor(ui_theme.text_secondary),
-                    ));
                 });
             });
     });
@@ -421,7 +424,7 @@ fn setup(
         parent.spawn((
             Node {
                 width: Val::Px(760.0),
-                height: Val::Px(430.0),
+                height: Val::Px(340.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()
@@ -434,7 +437,7 @@ fn setup(
                     left: Val::Px(2.0),
                     top: Val::Px(2.0),
                     width: Val::Px(760.0),
-                    height: Val::Px(430.0),
+                    height: Val::Px(340.0),
                     border_radius: BorderRadius::all(Val::Px(26.0)),
                     ..default()
                 },
@@ -444,7 +447,7 @@ fn setup(
                 .spawn((
                     Node {
                         width: Val::Px(760.0),
-                        height: Val::Px(430.0),
+                        height: Val::Px(340.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         flex_direction: FlexDirection::Column,
@@ -554,7 +557,7 @@ fn setup(
                             border_radius: BorderRadius::all(Val::Px(18.0)),
                             ..default()
                         },
-                        BackgroundColor(ui_theme.panel_fill),
+                        BackgroundColor(Color::srgb(0.0, 0.702, 0.667)),
                     ))
                     .with_children(|modal| {
                         modal.spawn((
