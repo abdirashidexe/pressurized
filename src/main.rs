@@ -4,13 +4,18 @@ const SCREEN_WIDTH: f32 = 900.0;
 const SCREEN_HEIGHT: f32 = 600.0;
 const GAP_WIDTH: f32 = SCREEN_WIDTH * 0.5;
 const BUBBLE_RADIUS: f32 = 30.0;
-const BUBBLE_START: Vec3 = Vec3::new(0.0, -200.0, 0.0);
+const BUBBLE_START: Vec3 = Vec3::new(0.0, -150.0, 0.0);
+const SEGMENT_HEIGHT: f32 = 120.0;
+const SCROLL_SPEED: f32 = 150.0;
 
 #[derive(Component)]
 struct RisingCircle;
 
 #[derive(Component, Default)]
 struct HorizontalVelocity(f32);
+
+#[derive(Component)]
+struct CaveSegment;
 
 #[derive(Component)]
 struct PopMessage;
@@ -33,7 +38,7 @@ fn main() {
         .init_resource::<GameStatus>()
         .add_systems(Startup, setup)
         .add_systems(Update, steer_circle)
-        .add_systems(Update, rise_circle)
+        .add_systems(Update, scroll_cave_segments)
         .add_systems(Update, detect_wall_collision)
         .add_systems(Update, restart_game)
         .run();
@@ -44,21 +49,14 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
-    let wall_width = (SCREEN_WIDTH - GAP_WIDTH) * 0.5;
-    let left_wall_x = -(GAP_WIDTH * 0.5 + wall_width * 0.5);
-    let right_wall_x = GAP_WIDTH * 0.5 + wall_width * 0.5;
+    let segment_count = (SCREEN_HEIGHT / SEGMENT_HEIGHT).ceil() as i32 + 1;
+    let first_segment_y = -SCREEN_HEIGHT * 0.5 + SEGMENT_HEIGHT * 0.5;
 
     commands.spawn(Camera2d);
-    commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(wall_width, SCREEN_HEIGHT))),
-        MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
-        Transform::from_xyz(left_wall_x, 0.0, 0.0),
-    ));
-    commands.spawn((
-        Mesh2d(meshes.add(Rectangle::new(wall_width, SCREEN_HEIGHT))),
-        MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
-        Transform::from_xyz(right_wall_x, 0.0, 0.0),
-    ));
+    for i in 0..segment_count {
+        let y = first_segment_y + i as f32 * SEGMENT_HEIGHT;
+        spawn_cave_segment(&mut commands, &mut meshes, &mut materials, y);
+    }
     commands.spawn((
         Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS))),
         MeshMaterial2d(materials.add(Color::WHITE)),
@@ -84,6 +82,36 @@ fn setup(
         PopMessage,
         Visibility::Hidden,
     ));
+}
+
+fn spawn_cave_segment(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<ColorMaterial>,
+    y: f32,
+) {
+    let wall_width = (SCREEN_WIDTH - GAP_WIDTH) * 0.5;
+    let left_wall_x = -(GAP_WIDTH * 0.5 + wall_width * 0.5);
+    let right_wall_x = GAP_WIDTH * 0.5 + wall_width * 0.5;
+
+    commands
+        .spawn((
+            CaveSegment,
+            Transform::from_xyz(0.0, y, 0.0),
+            GlobalTransform::default(),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                Mesh2d(meshes.add(Rectangle::new(wall_width, SEGMENT_HEIGHT))),
+                MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
+                Transform::from_xyz(left_wall_x, 0.0, 0.0),
+            ));
+            parent.spawn((
+                Mesh2d(meshes.add(Rectangle::new(wall_width, SEGMENT_HEIGHT))),
+                MeshMaterial2d(materials.add(Color::srgb(0.2, 0.2, 0.2))),
+                Transform::from_xyz(right_wall_x, 0.0, 0.0),
+            ));
+        });
 }
 
 fn steer_circle(
@@ -114,24 +142,44 @@ fn steer_circle(
     }
 }
 
-fn rise_circle(
+fn scroll_cave_segments(
     time: Res<Time>,
     game_status: Res<GameStatus>,
-    mut query: Query<&mut Transform, With<RisingCircle>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    segment_query: Query<(Entity, &Transform), With<CaveSegment>>,
 ) {
     if game_status.popped {
         return;
     }
 
-    let speed = 40.0;
-    for mut transform in &mut query {
-        transform.translation.y += speed * time.delta_secs();
+    let mut top_y = f32::NEG_INFINITY;
+    for (_, transform) in &segment_query {
+        top_y = top_y.max(transform.translation.y);
+    }
+
+    for (entity, transform) in &segment_query {
+        let new_y = transform.translation.y - SCROLL_SPEED * time.delta_secs();
+        let below_screen = new_y + SEGMENT_HEIGHT * 0.5 < -SCREEN_HEIGHT * 0.5;
+
+        if below_screen {
+            commands.entity(entity).despawn();
+            let spawn_y = top_y + SEGMENT_HEIGHT;
+            spawn_cave_segment(&mut commands, &mut meshes, &mut materials, spawn_y);
+            top_y = spawn_y;
+        } else {
+            commands
+                .entity(entity)
+                .insert(Transform::from_xyz(0.0, new_y, 0.0));
+        }
     }
 }
 
 fn detect_wall_collision(
     mut game_status: ResMut<GameStatus>,
     mut bubble_query: Query<(&Transform, &mut Visibility), With<RisingCircle>>,
+    segment_query: Query<&Transform, With<CaveSegment>>,
     mut pop_text_query: Query<&mut Visibility, (With<PopMessage>, Without<RisingCircle>)>,
 ) {
     if game_status.popped {
@@ -144,7 +192,19 @@ fn detect_wall_collision(
     let Ok((bubble_transform, mut bubble_visibility)) = bubble_query.single_mut() else {
         return;
     };
+
     let bubble_x = bubble_transform.translation.x;
+    let bubble_y = bubble_transform.translation.y;
+
+    let has_segment_at_bubble_height = segment_query.iter().any(|segment_transform| {
+        let half_height = SEGMENT_HEIGHT * 0.5;
+        let min_y = segment_transform.translation.y - half_height;
+        let max_y = segment_transform.translation.y + half_height;
+        bubble_y >= min_y && bubble_y <= max_y
+    });
+    if !has_segment_at_bubble_height {
+        return;
+    }
 
     let hit_left_wall = bubble_x - BUBBLE_RADIUS <= left_inner_edge;
     let hit_right_wall = bubble_x + BUBBLE_RADIUS >= right_inner_edge;
