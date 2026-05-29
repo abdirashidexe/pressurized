@@ -81,14 +81,11 @@ struct GameOverText;
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 enum GameOverBanner {
     NewBest,
-    HouseRecord,
+    GlobalRecord,
 }
 
 #[derive(Component)]
 struct GameOverBestText;
-
-#[derive(Component)]
-struct GameOverRunHistory;
 
 #[derive(Component)]
 struct GameOverPlayerLine;
@@ -121,7 +118,7 @@ struct MenuScreenState {
 
 struct RecordRunResult {
     new_personal_best: bool,
-    new_house_record: bool,
+    new_global_record: bool,
     rank: usize,
 }
 
@@ -340,7 +337,7 @@ impl PlayerDatabase {
         rows
     }
 
-    fn house_best(&self) -> i32 {
+    fn global_best(&self) -> i32 {
         self.leaderboard()
             .first()
             .map(|profile| profile.best_depth_m)
@@ -355,11 +352,11 @@ impl PlayerDatabase {
     }
 
     fn record_run(&mut self, name: &str, depth_m: i32) -> io::Result<RecordRunResult> {
-        let house_best_before = self.house_best();
+        let global_best_before = self.global_best();
         let Some(profile) = self.profiles.iter_mut().find(|profile| profile.name == name) else {
             return Ok(RecordRunResult {
                 new_personal_best: false,
-                new_house_record: false,
+                new_global_record: false,
                 rank: 0,
             });
         };
@@ -374,19 +371,19 @@ impl PlayerDatabase {
         self.save()?;
 
         let rank = self.rank_of(name).unwrap_or(0);
-        let new_house_record = depth_m > house_best_before;
+        let new_global_record = depth_m > global_best_before;
         Ok(RecordRunResult {
             new_personal_best,
-            new_house_record,
+            new_global_record,
             rank,
         })
     }
 }
 
-fn format_leaderboard_lines(database: &PlayerDatabase, highlight: Option<&str>) -> String {
+fn format_global_leaderboard_lines(database: &PlayerDatabase, highlight: Option<&str>) -> String {
     let rows = database.leaderboard();
     if rows.is_empty() {
-        return "Leaderboard: —".to_string();
+        return "—".to_string();
     }
 
     rows.iter()
@@ -409,17 +406,17 @@ fn format_leaderboard_lines(database: &PlayerDatabase, highlight: Option<&str>) 
         .join("\n")
 }
 
-fn format_run_history(recent_depths: &[i32]) -> String {
+fn format_personal_history(recent_depths: &[i32]) -> String {
     if recent_depths.is_empty() {
-        return "Recent runs: —".to_string();
+        return "No runs yet.".to_string();
     }
 
-    let depths = recent_depths
+    recent_depths
         .iter()
-        .map(|depth| format!("{depth}m"))
+        .enumerate()
+        .map(|(index, depth)| format!("#{}  {depth}m", index + 1))
         .collect::<Vec<_>>()
-        .join(" · ");
-    format!("Recent: {depths}")
+        .join("\n")
 }
 
 #[derive(Component, Clone, Copy)]
@@ -480,6 +477,21 @@ struct MenuHowToButton;
 
 #[derive(Component)]
 struct HowToModal;
+
+#[derive(Component)]
+struct LeaderboardModal;
+
+#[derive(Component)]
+struct LeaderboardOpenButton;
+
+#[derive(Component)]
+struct CloseLeaderboardButton;
+
+#[derive(Component)]
+struct LeaderboardPersonalText;
+
+#[derive(Component)]
+struct LeaderboardGlobalText;
 
 #[derive(Component)]
 struct CloseHowToButton;
@@ -689,6 +701,16 @@ fn main() {
         )
         .add_systems(Update, menu_how_to_button_input.run_if(in_state(GameState::Menu)))
         .add_systems(Update, menu_close_how_to_button_input.run_if(in_state(GameState::Menu)))
+        .add_systems(
+            Update,
+            leaderboard_open_button_input
+                .run_if(in_state(GameState::Menu).or(in_state(GameState::GameOver))),
+        )
+        .add_systems(
+            Update,
+            leaderboard_close_button_input
+                .run_if(in_state(GameState::Menu).or(in_state(GameState::GameOver))),
+        )
         .add_systems(Update, update_menu_bubbles.run_if(in_state(GameState::Menu)))
         .add_systems(
             Update,
@@ -871,14 +893,14 @@ fn setup(
                         Visibility::Hidden,
                     ));
                     card.spawn((
-                        Text::new("New House Record!"),
+                        Text::new("New Global Record!"),
                         TextFont {
                             font_size: 22.0,
                             font: comic_bold_italic.clone(),
                             ..default()
                         },
                         TextColor(ui_theme.text_primary),
-                        GameOverBanner::HouseRecord,
+                        GameOverBanner::GlobalRecord,
                         Visibility::Hidden,
                     ));
                     card.spawn((
@@ -890,16 +912,6 @@ fn setup(
                         },
                         TextColor(ui_theme.text_secondary),
                         GameOverBestText,
-                    ));
-                    card.spawn((
-                        Text::new("Recent: —"),
-                        TextFont {
-                            font_size: 17.0,
-                            font: comic_bold.clone(),
-                            ..default()
-                        },
-                        TextColor(ui_theme.text_secondary),
-                        GameOverRunHistory,
                     ));
                     card.spawn((
                         Button,
@@ -946,6 +958,31 @@ fn setup(
                                     TextColor(ui_theme.button_text),
                                 ));
                             });
+                    });
+                    card.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(240.0),
+                            height: Val::Px(54.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Px(14.0)),
+                            margin: UiRect::top(Val::Px(4.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ui_theme.button_fill),
+                        LeaderboardOpenButton,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("Leaderboard"),
+                            TextFont {
+                                font_size: 22.0,
+                                font: comic_bold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.button_text),
+                        ));
                     });
                     card.spawn((
                         Button,
@@ -1193,6 +1230,31 @@ fn setup(
                             ..default()
                         },
                         BackgroundColor(ui_theme.button_fill),
+                        LeaderboardOpenButton,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("Leaderboard"),
+                            TextFont {
+                                font_size: 22.0,
+                                font: comic_bold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.button_text),
+                        ));
+                    });
+                    card.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(280.0),
+                            height: Val::Px(52.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Px(14.0)),
+                            margin: UiRect::top(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ui_theme.button_fill),
                         ProfileMenuButtonAction::SwitchPlayer,
                     ))
                     .with_children(|button| {
@@ -1273,7 +1335,7 @@ fn setup(
                                     ProfileMenuText::WelcomeTitle,
                                 ));
                                 welcome.spawn((
-                                    Text::new("Leaderboard:\n—"),
+                                    Text::new("Global:\n—"),
                                     TextFont {
                                         font_size: 17.0,
                                         font: comic_bold.clone(),
@@ -1356,7 +1418,7 @@ fn setup(
                                     TextColor(ui_theme.text_primary),
                                 ));
                                 switch.spawn((
-                                    Text::new("Leaderboard:\n—"),
+                                    Text::new("Global:\n—"),
                                     TextFont {
                                         font_size: 17.0,
                                         font: comic_bold.clone(),
@@ -1652,6 +1714,155 @@ fn setup(
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.55)),
+        LeaderboardModal,
+        ZIndex(900),
+        Visibility::Hidden,
+    ))
+    .with_children(|overlay| {
+        overlay
+            .spawn((
+                Node {
+                    width: Val::Px(720.0),
+                    max_width: Val::Percent(94.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(24.0)),
+                    row_gap: Val::Px(14.0),
+                    border_radius: BorderRadius::all(Val::Px(18.0)),
+                    ..default()
+                },
+                BackgroundColor(ui_theme.panel_fill),
+            ))
+            .with_children(|panel| {
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            justify_content: JustifyContent::SpaceBetween,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                    ))
+                    .with_children(|header| {
+                        header.spawn((
+                            Text::new("Leaderboard"),
+                            TextFont {
+                                font_size: 32.0,
+                                font: comic_bold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.text_primary),
+                        ));
+                        header
+                            .spawn((
+                                Button,
+                                Node {
+                                    width: Val::Px(34.0),
+                                    height: Val::Px(34.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    border_radius: BorderRadius::all(Val::Px(10.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(ui_theme.button_fill),
+                                CloseLeaderboardButton,
+                            ))
+                            .with_children(|button| {
+                                button.spawn((
+                                    Text::new("X"),
+                                    TextFont {
+                                        font_size: 20.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.button_text),
+                                ));
+                            });
+                    });
+                panel
+                    .spawn((
+                        Node {
+                            width: Val::Percent(100.0),
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(20.0),
+                            align_items: AlignItems::FlexStart,
+                            ..default()
+                        },
+                    ))
+                    .with_children(|columns| {
+                        columns
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(50.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|left| {
+                                left.spawn((
+                                    Text::new("Your Recent Runs"),
+                                    TextFont {
+                                        font_size: 20.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_primary),
+                                ));
+                                left.spawn((
+                                    Text::new("—"),
+                                    TextFont {
+                                        font_size: 17.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_secondary),
+                                    LeaderboardPersonalText,
+                                ));
+                            });
+                        columns
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(50.0),
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|right| {
+                                right.spawn((
+                                    Text::new("Global Leaderboard"),
+                                    TextFont {
+                                        font_size: 20.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_primary),
+                                ));
+                                right.spawn((
+                                    Text::new("—"),
+                                    TextFont {
+                                        font_size: 17.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_secondary),
+                                    LeaderboardGlobalText,
+                                ));
+                            });
+                    });
+            });
+    });
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
             top: Val::Px(16.0),
             left: Val::Px(16.0),
             width: Val::Px(280.0),
@@ -1863,27 +2074,32 @@ fn next_gap_center(previous_gap_center_x: f32) -> f32 {
 
 fn enter_menu(
     mut clear_color: ResMut<ClearColor>,
-    mut gameplay_query: Query<
-        &mut Visibility,
-        (With<GameplayEntity>, Without<MenuUi>, Without<GameOverUi>, Without<DepthHud>),
-    >,
-    mut game_over_query: Query<
-        (&mut Visibility, &mut Node),
-        (With<GameOverUi>, Without<DepthHud>),
-    >,
-    mut depth_hud_query: Query<
-        (&mut Visibility, &mut Node),
-        (With<DepthHud>, Without<GameOverUi>),
-    >,
+    mut queries: ParamSet<(
+        Query<
+            &mut Visibility,
+            (
+                With<GameplayEntity>,
+                Without<MenuUi>,
+                Without<GameOverUi>,
+                Without<DepthHud>,
+            ),
+        >,
+        Query<(&mut Visibility, &mut Node), With<GameOverUi>>,
+        Query<(&mut Visibility, &mut Node), With<DepthHud>>,
+        Query<(&mut Visibility, &mut Node), With<LeaderboardModal>>,
+    )>,
 ) {
     clear_color.0 = atmosphere_clear_color(0.0);
-    for mut visibility in &mut gameplay_query {
+    for mut visibility in queries.p0().iter_mut() {
         *visibility = Visibility::Hidden;
     }
-    if let Ok((mut visibility, mut node)) = game_over_query.single_mut() {
+    if let Ok((mut visibility, mut node)) = queries.p1().single_mut() {
         set_ui_shown(&mut visibility, &mut node, false);
     }
-    if let Ok((mut visibility, mut node)) = depth_hud_query.single_mut() {
+    if let Ok((mut visibility, mut node)) = queries.p2().single_mut() {
+        set_ui_shown(&mut visibility, &mut node, false);
+    }
+    if let Ok((mut visibility, mut node)) = queries.p3().single_mut() {
         set_ui_shown(&mut visibility, &mut node, false);
     }
 }
@@ -2031,21 +2247,12 @@ fn record_game_over_run(
     mut database: ResMut<PlayerDatabase>,
     mut depth_text_query: Query<&mut Text, With<GameOverText>>,
     mut best_text_query: Query<&mut Text, (With<GameOverBestText>, Without<GameOverText>)>,
-    mut history_text_query: Query<
-        &mut Text,
-        (
-            With<GameOverRunHistory>,
-            Without<GameOverText>,
-            Without<GameOverBestText>,
-        ),
-    >,
     mut player_line_query: Query<
         &mut Text,
         (
             With<GameOverPlayerLine>,
             Without<GameOverText>,
             Without<GameOverBestText>,
-            Without<GameOverRunHistory>,
         ),
     >,
     mut banner_query: Query<(&GameOverBanner, &mut Visibility)>,
@@ -2063,7 +2270,7 @@ fn record_game_over_run(
         .record_run(&player_name, depth_m)
         .unwrap_or(RecordRunResult {
             new_personal_best: false,
-            new_house_record: false,
+            new_global_record: false,
             rank: 0,
         });
 
@@ -2073,9 +2280,6 @@ fn record_game_over_run(
     if let Some(profile) = database.profile(&player_name) {
         if let Ok(mut best_text) = best_text_query.single_mut() {
             *best_text = Text::new(format!("Best: {}m", profile.best_depth_m));
-        }
-        if let Ok(mut history_text) = history_text_query.single_mut() {
-            *history_text = Text::new(format_run_history(&profile.recent_depths));
         }
     }
     if let Ok(mut player_line) = player_line_query.single_mut() {
@@ -2089,9 +2293,9 @@ fn record_game_over_run(
             }
         }
     }
-    if result.new_house_record {
+    if result.new_global_record {
         for (banner, mut visibility) in &mut banner_query {
-            if *banner == GameOverBanner::HouseRecord {
+            if *banner == GameOverBanner::GlobalRecord {
                 *visibility = Visibility::Visible;
             }
         }
@@ -2140,26 +2344,26 @@ fn apply_menu_profile_visibility(
 }
 
 fn hide_all_menu_ui(
-    mut menu_query: Query<
-        (&mut Visibility, &mut Node),
-        (With<MenuUi>, Without<ProfileUiVisibility>, Without<HowToModal>),
-    >,
-    mut profile_query: Query<
-        (&ProfileUiVisibility, &mut Visibility, &mut Node),
-        (Without<MenuUi>, Without<HowToModal>),
-    >,
-    mut how_to_query: Query<
-        (&mut Visibility, &mut Node),
-        (With<HowToModal>, Without<MenuUi>, Without<ProfileUiVisibility>),
-    >,
+    mut queries: ParamSet<(
+        Query<(&mut Visibility, &mut Node), With<MenuUi>>,
+        Query<
+            (&ProfileUiVisibility, &mut Visibility, &mut Node),
+            Without<MenuUi>,
+        >,
+        Query<(&mut Visibility, &mut Node), With<HowToModal>>,
+        Query<(&mut Visibility, &mut Node), With<LeaderboardModal>>,
+    )>,
 ) {
-    if let Ok((mut visibility, mut node)) = menu_query.single_mut() {
+    if let Ok((mut visibility, mut node)) = queries.p0().single_mut() {
         set_ui_shown(&mut visibility, &mut node, false);
     }
-    for (_, mut visibility, mut node) in &mut profile_query {
+    for (_, mut visibility, mut node) in queries.p1().iter_mut() {
         set_ui_shown(&mut visibility, &mut node, false);
     }
-    if let Ok((mut visibility, mut node)) = how_to_query.single_mut() {
+    if let Ok((mut visibility, mut node)) = queries.p2().single_mut() {
+        set_ui_shown(&mut visibility, &mut node, false);
+    }
+    if let Ok((mut visibility, mut node)) = queries.p3().single_mut() {
         set_ui_shown(&mut visibility, &mut node, false);
     }
 }
@@ -2216,7 +2420,7 @@ fn refresh_profile_menu_ui(
 
     let rows: Vec<_> = database.leaderboard().into_iter().take(MAX_PROFILES).collect();
     let highlight = active.0.as_deref();
-    let leaderboard = format_leaderboard_lines(&database, highlight);
+    let leaderboard = format_global_leaderboard_lines(&database, highlight);
     for (slot, mut text) in &mut text_query {
         *text = match slot {
             ProfileMenuText::WelcomeTitle => {
@@ -2227,7 +2431,7 @@ fn refresh_profile_menu_ui(
                 }
             }
             ProfileMenuText::WelcomeLeaderboard | ProfileMenuText::SwitchLeaderboard => {
-                Text::new(format!("Leaderboard:\n{leaderboard}"))
+                Text::new(format!("Global:\n{leaderboard}"))
             }
             ProfileMenuText::PlayingAs => Text::new(format!(
                 "Playing as {}",
@@ -2497,6 +2701,100 @@ fn menu_close_how_to_button_input(
         (Changed<Interaction>, With<Button>, With<CloseHowToButton>),
     >,
     mut modal_query: Query<(&mut Visibility, &mut Node), With<HowToModal>>,
+    ui_theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(ui_theme.button_pressed);
+                if let Ok((mut modal_visibility, mut node)) = modal_query.single_mut() {
+                    set_ui_shown(&mut modal_visibility, &mut node, false);
+                }
+            }
+            Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
+            Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
+        }
+    }
+}
+
+fn refresh_leaderboard_modal(
+    active: &ActivePlayer,
+    database: &PlayerDatabase,
+    personal_query: &mut Query<&mut Text, With<LeaderboardPersonalText>>,
+    global_query: &mut Query<
+        &mut Text,
+        (With<LeaderboardGlobalText>, Without<LeaderboardPersonalText>),
+    >,
+) {
+    let highlight = active.0.as_deref();
+    if let Ok(mut personal) = personal_query.single_mut() {
+        *personal = Text::new(if let Some(name) = &active.0 {
+            database
+                .profile(name)
+                .map(|profile| format_personal_history(&profile.recent_depths))
+                .unwrap_or_else(|| "No runs yet.".to_string())
+        } else {
+            "Select a player to see history.".to_string()
+        });
+    }
+    if let Ok(mut global) = global_query.single_mut() {
+        *global = Text::new(format_global_leaderboard_lines(database, highlight));
+    }
+}
+
+fn leaderboard_open_button_input(
+    mut query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>, With<LeaderboardOpenButton>),
+    >,
+    menu_state: Res<MenuScreenState>,
+    state: Res<State<GameState>>,
+    active: Res<ActivePlayer>,
+    database: Res<PlayerDatabase>,
+    mut modal_query: Query<
+        (&mut Visibility, &mut Node),
+        (With<LeaderboardModal>, Without<HowToModal>),
+    >,
+    mut personal_query: Query<&mut Text, With<LeaderboardPersonalText>>,
+    mut global_query: Query<
+        &mut Text,
+        (With<LeaderboardGlobalText>, Without<LeaderboardPersonalText>),
+    >,
+    ui_theme: Res<UiTheme>,
+) {
+    if *state.get() == GameState::Menu && menu_state.screen != MenuScreen::Main {
+        return;
+    }
+
+    for (interaction, mut color) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(ui_theme.button_pressed);
+                refresh_leaderboard_modal(
+                    &active,
+                    &database,
+                    &mut personal_query,
+                    &mut global_query,
+                );
+                if let Ok((mut modal_visibility, mut node)) = modal_query.single_mut() {
+                    set_ui_shown(&mut modal_visibility, &mut node, true);
+                }
+            }
+            Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
+            Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
+        }
+    }
+}
+
+fn leaderboard_close_button_input(
+    mut query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>, With<CloseLeaderboardButton>),
+    >,
+    mut modal_query: Query<
+        (&mut Visibility, &mut Node),
+        (With<LeaderboardModal>, Without<HowToModal>),
+    >,
     ui_theme: Res<UiTheme>,
 ) {
     for (interaction, mut color) in &mut query {
