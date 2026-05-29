@@ -52,6 +52,9 @@ struct GameplayEntity;
 struct DepthHud;
 
 #[derive(Component)]
+struct DepthHudValue;
+
+#[derive(Component)]
 struct MenuUi;
 
 #[derive(Component)]
@@ -67,7 +70,6 @@ struct UiTheme {
     panel_shadow: Color,
     text_primary: Color,
     text_secondary: Color,
-    text_shadow: Color,
     hud_panel: Color,
 }
 
@@ -79,7 +81,6 @@ impl Default for UiTheme {
             panel_shadow: Color::srgba(0.0, 0.588, 0.722, 0.45),
             text_primary: Color::linear_rgba(0.89, 0.969, 0.949, 1.0),
             text_secondary: Color::linear_rgba(0.624, 0.898, 0.878, 1.0),
-            text_shadow: Color::srgba(0.0, 0.702, 0.667, 0.5),
             hud_panel: Color::srgba(0.0, 0.702, 0.667, 0.58),
         }
     }
@@ -290,6 +291,7 @@ fn setup(
         Node {
             position_type: PositionType::Absolute,
             width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             flex_direction: FlexDirection::Column,
@@ -387,36 +389,22 @@ fn setup(
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Percent(3.4),
-            left: Val::Percent(50.0),
-            width: Val::Px(190.0),
-            height: Val::Px(54.0),
-            justify_content: JustifyContent::Center,
+            top: Val::Px(12.0),
+            left: Val::Px(12.0),
+            width: Val::Px(280.0),
+            height: Val::Px(62.0),
+            justify_content: JustifyContent::FlexStart,
             align_items: AlignItems::Center,
+            padding: UiRect::left(Val::Px(14.0)),
             border_radius: BorderRadius::all(Val::Px(14.0)),
             ..default()
         },
         BackgroundColor(ui_theme.hud_panel),
         DepthHud,
         GameplayEntity,
-        Visibility::Visible,
+        Visibility::Hidden,
     ))
     .with_children(|hud| {
-        hud.spawn((
-            Text::new("Depth: 0m"),
-            TextFont {
-                font_size: 36.0,
-                font: poppins_regular.clone(),
-                ..default()
-            },
-            TextColor(ui_theme.text_shadow),
-            Node {
-                position_type: PositionType::Absolute,
-                left: Val::Px(1.0),
-                top: Val::Px(1.0),
-                ..default()
-            },
-        ));
         hud.spawn((
             Text::new("Depth: 0m"),
             TextFont {
@@ -425,6 +413,7 @@ fn setup(
                 ..default()
             },
             TextColor(ui_theme.text_primary),
+            DepthHudValue,
         ));
     });
 }
@@ -903,14 +892,12 @@ fn detect_wall_collision(
 
 fn update_depth_ui(
     depth_state: Res<DepthState>,
-    mut hud_query: Query<&mut Text, Without<GameOverText>>,
+    mut hud_query: Query<&mut Text, With<DepthHudValue>>,
 ) {
     let depth_meters = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
     let depth_label = format!("Depth: {}m", depth_meters);
 
     for mut text in &mut hud_query {
-        if text.as_str().starts_with("Depth:") {
-            *text = Text::new(depth_label.clone());
-        }
+        *text = Text::new(depth_label.clone());
     }
 }
