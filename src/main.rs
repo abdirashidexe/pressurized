@@ -105,7 +105,11 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut cave_generation: ResMut<CaveGeneration>,
+    asset_server: Res<AssetServer>,
 ) {
+    let poppins_regular = asset_server.load("fonts/Poppins-Regular.ttf");
+    let poppins_semibold = asset_server.load("fonts/Poppins-SemiBold.ttf");
+
     commands.spawn(Camera2d);
     reset_and_spawn_cave(
         &mut commands,
@@ -149,22 +153,40 @@ fn setup(
                     height: Val::Px(220.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(10.0),
                     ..default()
                 },
                 BackgroundColor(Color::srgba(0.0, 0.0, 0.1, 0.88)),
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("You Popped!\nDepth: 0m\nPress R to restart"),
+                    Text::new("You Popped!"),
                     TextFont {
                         font_size: 48.0,
+                        font: poppins_semibold.clone(),
                         ..default()
                     },
                     TextColor(Color::WHITE),
-                    Node {
+                ));
+                panel.spawn((
+                    Text::new("Depth: 0m"),
+                    TextFont {
+                        font_size: 48.0,
+                        font: poppins_regular.clone(),
                         ..default()
                     },
+                    TextColor(Color::WHITE),
                     GameOverText,
+                ));
+                panel.spawn((
+                    Text::new("Press R to restart"),
+                    TextFont {
+                        font_size: 48.0,
+                        font: poppins_regular.clone(),
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
                 ));
             });
     });
@@ -188,6 +210,7 @@ fn setup(
             Text::new("PRESSURIZED"),
             TextFont {
                 font_size: 86.0,
+                font: poppins_semibold.clone(),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -196,6 +219,7 @@ fn setup(
             Text::new("Press SPACE to begin"),
             TextFont {
                 font_size: 34.0,
+                font: poppins_regular.clone(),
                 ..default()
             },
             TextColor(Color::WHITE),
@@ -205,6 +229,7 @@ fn setup(
         Text::new("Depth: 0m"),
         TextFont {
             font_size: 36.0,
+            font: poppins_regular.clone(),
             ..default()
         },
         TextColor(Color::WHITE),
@@ -480,7 +505,7 @@ fn detect_wall_collision(
     depth_state: Res<DepthState>,
     bubble_query: Query<&Transform, With<RisingCircle>>,
     segment_query: Query<(&Transform, &CaveSegment)>,
-    mut game_over_text_query: Query<&mut Text, With<GameOverText>>,
+    mut game_over_depth_query: Query<&mut Text, With<GameOverText>>,
 ) {
     let Ok(bubble_transform) = bubble_query.single() else {
         return;
@@ -506,12 +531,9 @@ fn detect_wall_collision(
     let hit_right_wall = bubble_x + BUBBLE_RADIUS >= right_inner_edge;
 
     if hit_left_wall || hit_right_wall {
-        if let Ok(mut game_over_text) = game_over_text_query.single_mut() {
+        if let Ok(mut game_over_depth_text) = game_over_depth_query.single_mut() {
             let depth_meters = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
-            *game_over_text = Text::new(format!(
-                "You Popped!\nDepth: {}m\nPress R to restart",
-                depth_meters
-            ));
+            *game_over_depth_text = Text::new(format!("Depth: {}m", depth_meters));
         }
         next_state.set(GameState::GameOver);
     }
