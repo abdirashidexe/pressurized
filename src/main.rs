@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::render::view::Hdr;
+use bevy::transform::TransformSystems;
 
 const SCREEN_WIDTH: f32 = 900.0;
 const SCREEN_HEIGHT: f32 = 600.0;
@@ -158,6 +159,12 @@ struct ScreenShake {
 #[derive(Component)]
 struct FadeOverlay;
 
+#[derive(Component)]
+struct WorldRoot;
+
+#[derive(Resource)]
+struct WorldRootEntity(Entity);
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum FadePhase {
     FadeOut,
@@ -181,10 +188,6 @@ fn fade_transition_active(fade: Res<FadeTransition>) -> bool {
 
 fn gameplay_allowed(state: Res<State<GameState>>, fade: Res<FadeTransition>) -> bool {
     *state.get() == GameState::Playing && fade.active.is_none()
-}
-
-fn screen_shake_active(shake: Res<ScreenShake>) -> bool {
-    shake.trauma > 0.0
 }
 
 fn depth_blend_t(depth_meters: f32) -> f32 {
@@ -255,11 +258,12 @@ fn main() {
             (
                 steer_circle,
                 bubble_wobble,
-                scroll_cave_segments,
                 detect_wall_collision,
+                scroll_cave_segments,
                 update_depth_ui,
                 update_depth_atmosphere,
             )
+                .chain()
                 .run_if(gameplay_allowed),
         )
         .add_systems(Update, update_fade_transition)
@@ -292,7 +296,10 @@ fn main() {
             Update,
             update_pop_particles.run_if(in_state(GameState::GameOver)),
         )
-        .add_systems(Last, update_screen_shake.run_if(screen_shake_active))
+        .add_systems(
+            PostUpdate,
+            update_screen_shake.after(TransformSystems::Propagate),
+        )
         .run();
 }
 
@@ -323,13 +330,19 @@ fn setup(
             ..Bloom::default()
         },
     ));
+    let world_root = commands
+        .spawn((WorldRoot, Transform::default(), Visibility::Visible))
+        .id();
+    commands.insert_resource(WorldRootEntity(world_root));
     reset_and_spawn_cave(
         &mut commands,
         &mut meshes,
         &mut materials,
         cave_generation.as_mut(),
+        world_root,
     );
     commands.spawn((
+        ChildOf(world_root),
         Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS))),
         MeshMaterial2d(materials.add(Color::linear_rgba(1.35, 1.75, 1.9, 0.88))),
         Transform::from_translation(BUBBLE_START),
@@ -885,12 +898,13 @@ fn spawn_cave_segment(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
+    world_root: Entity,
     y: f32,
     gap_center_x: f32,
-    spawn_index: u32,
+    wall_depth_meters: f32,
     teeth_in_upper_half: bool,
 ) {
-    let wall_color = cave_wall_color_for_depth(spawn_depth_meters(spawn_index));
+    let wall_color = cave_wall_color_for_depth(wall_depth_meters);
     let half_screen = SCREEN_WIDTH * 0.5;
     let left_gap_edge = gap_center_x - GAP_WIDTH * 0.5;
     let right_gap_edge = gap_center_x + GAP_WIDTH * 0.5;
@@ -901,6 +915,7 @@ fn spawn_cave_segment(
 
     commands
         .spawn((
+            ChildOf(world_root),
             CaveSegment { gap_center_x },
             Transform::from_xyz(0.0, y, 0.0),
             GlobalTransform::default(),
@@ -959,6 +974,7 @@ fn reset_and_spawn_cave(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<ColorMaterial>,
     cave_generation: &mut CaveGeneration,
+    world_root: Entity,
 ) {
     let segment_count = (SCREEN_HEIGHT / SEGMENT_HEIGHT).ceil() as i32 + 1;
     let first_segment_y = -SCREEN_HEIGHT * 0.5 + SEGMENT_HEIGHT * 0.5;
@@ -973,9 +989,10 @@ fn reset_and_spawn_cave(
             commands,
             meshes,
             materials,
+            world_root,
             y,
             gap_center_x,
-            spawn_index,
+            spawn_depth_meters(spawn_index),
             spawn_index % 2 == 0,
         );
     }
@@ -1061,15 +1078,20 @@ fn enter_playing(
         &mut Visibility,
         (With<GameOverUi>, Without<GameplayEntity>, Without<MenuUi>),
     >,
-    mut camera_query: Query<&mut Transform, (With<Camera2d>, Without<RisingCircle>)>,
+    mut world_root_query: Query<(Entity, &mut Transform), (With<WorldRoot>, Without<RisingCircle>)>,
     mut bubble_query: Query<
         (&mut Transform, &mut HorizontalVelocity),
-        (With<RisingCircle>, Without<Camera2d>),
+        (With<RisingCircle>, Without<WorldRoot>),
     >,
     segment_query: Query<Entity, With<CaveSegment>>,
     particle_query: Query<Entity, With<PopParticle>>,
     mut depth_hud_query: Query<&mut Text, With<DepthHud>>,
 ) {
+    let Ok((world_root_entity, mut world_transform)) = world_root_query.single_mut() else {
+        return;
+    };
+    world_transform.translation = Vec3::ZERO;
+
     for entity in &segment_query {
         commands.entity(entity).despawn();
     }
@@ -1081,6 +1103,7 @@ fn enter_playing(
         &mut meshes,
         &mut materials,
         cave_generation.as_mut(),
+        world_root_entity,
     );
 
     if let Ok((mut transform, mut velocity)) = bubble_query.single_mut() {
@@ -1097,10 +1120,6 @@ fn enter_playing(
     run_state.time_alive_secs = 0.0;
     screen_shake.trauma = 0.0;
     screen_shake.elapsed_secs = 0.0;
-    if let Ok(mut camera_transform) = camera_query.single_mut() {
-        camera_transform.translation.x = 0.0;
-        camera_transform.translation.y = 0.0;
-    }
 
     for mut visibility in &mut gameplay_query {
         *visibility = Visibility::Visible;
@@ -1118,6 +1137,7 @@ fn enter_game_over(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut screen_shake: ResMut<ScreenShake>,
+    world_root: Res<WorldRootEntity>,
     mut game_over_query: Query<&mut Visibility, (With<GameOverUi>, Without<DepthHud>)>,
     mut depth_hud_query: Query<&mut Visibility, (With<DepthHud>, Without<GameOverUi>)>,
     bubble_query: Query<&Transform, With<RisingCircle>>,
@@ -1147,6 +1167,7 @@ fn enter_game_over(
             );
 
             commands.spawn((
+                ChildOf(world_root.0),
                 Mesh2d(meshes.add(Circle::new(radius))),
                 MeshMaterial2d(materials.add(Color::srgba(
                     base_color.x,
@@ -1330,29 +1351,93 @@ fn update_pop_particles(
     }
 }
 
+fn screen_shake_offset(trauma: f32) -> Vec2 {
+    let shake_strength = trauma * trauma;
+    Vec2::new(
+        (fastrand::f32() * 2.0 - 1.0) * SCREEN_SHAKE_MAX_OFFSET * shake_strength,
+        (fastrand::f32() * 2.0 - 1.0) * SCREEN_SHAKE_MAX_OFFSET * shake_strength,
+    )
+}
+
+type WorldRootTransformQuery<'w, 's> = Query<
+    'w,
+    's,
+    &'static mut Transform,
+    (
+        With<WorldRoot>,
+        Without<RisingCircle>,
+        Without<CaveSegment>,
+    ),
+>;
+
+fn apply_screen_shake_offset(
+    offset: Vec2,
+    world_root_query: &mut WorldRootTransformQuery<'_, '_>,
+    game_over_ui_query: &mut Query<&mut Node, With<GameOverUi>>,
+) {
+    if let Ok(mut world_transform) = world_root_query.single_mut() {
+        world_transform.translation = Vec3::new(offset.x, offset.y, 0.0);
+    }
+    if let Ok(mut game_over_ui) = game_over_ui_query.single_mut() {
+        game_over_ui.margin = UiRect {
+            left: Val::Px(offset.x),
+            top: Val::Px(offset.y),
+            ..default()
+        };
+    }
+}
+
+fn clear_screen_shake_offset(
+    world_root_query: &mut WorldRootTransformQuery<'_, '_>,
+    game_over_ui_query: &mut Query<&mut Node, With<GameOverUi>>,
+) {
+    if let Ok(mut world_transform) = world_root_query.single_mut() {
+        world_transform.translation = Vec3::ZERO;
+    }
+    if let Ok(mut game_over_ui) = game_over_ui_query.single_mut() {
+        game_over_ui.margin = UiRect::ZERO;
+    }
+}
+
 fn update_screen_shake(
     time: Res<Time>,
     mut screen_shake: ResMut<ScreenShake>,
-    mut camera_query: Query<&mut Transform, With<Camera2d>>,
+    mut world_root_query: WorldRootTransformQuery,
+    mut game_over_ui_query: Query<&mut Node, With<GameOverUi>>,
 ) {
+    if screen_shake.trauma <= 0.0 {
+        clear_screen_shake_offset(&mut world_root_query, &mut game_over_ui_query);
+        return;
+    }
+
     let dt = time.delta_secs();
     screen_shake.elapsed_secs += dt;
     let decay = dt / SCREEN_SHAKE_DURATION;
     screen_shake.trauma = (screen_shake.trauma - decay).max(0.0);
 
-    let shake_strength = screen_shake.trauma * screen_shake.trauma;
-    let offset_x = (fastrand::f32() * 2.0 - 1.0) * SCREEN_SHAKE_MAX_OFFSET * shake_strength;
-    let offset_y = (fastrand::f32() * 2.0 - 1.0) * SCREEN_SHAKE_MAX_OFFSET * shake_strength;
+    apply_screen_shake_offset(
+        screen_shake_offset(screen_shake.trauma),
+        &mut world_root_query,
+        &mut game_over_ui_query,
+    );
+}
 
-    for mut camera_transform in &mut camera_query {
-        if screen_shake.trauma > 0.0 {
-            camera_transform.translation.x = offset_x;
-            camera_transform.translation.y = offset_y;
-        } else {
-            camera_transform.translation.x = 0.0;
-            camera_transform.translation.y = 0.0;
-        }
+fn bubble_hits_segment_wall(
+    bubble_x: f32,
+    bubble_y: f32,
+    segment_transform: &Transform,
+    segment: &CaveSegment,
+) -> bool {
+    let half_height = WALL_VISUAL_HEIGHT * 0.5;
+    let min_y = segment_transform.translation.y - half_height;
+    let max_y = segment_transform.translation.y + half_height;
+    if bubble_y + BUBBLE_RADIUS < min_y || bubble_y - BUBBLE_RADIUS > max_y {
+        return false;
     }
+
+    let left_inner_edge = segment.gap_center_x - GAP_WIDTH * 0.5;
+    let right_inner_edge = segment.gap_center_x + GAP_WIDTH * 0.5;
+    bubble_x - BUBBLE_RADIUS <= left_inner_edge || bubble_x + BUBBLE_RADIUS >= right_inner_edge
 }
 
 fn steer_circle(
@@ -1397,6 +1482,7 @@ fn scroll_cave_segments(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut cave_generation: ResMut<CaveGeneration>,
+    world_root: Res<WorldRootEntity>,
     segment_query: Query<(Entity, &Transform), With<CaveSegment>>,
 ) {
     run_state.time_alive_secs += time.delta_secs();
@@ -1404,30 +1490,47 @@ fn scroll_cave_segments(
         (BASE_SCROLL_SPEED + run_state.time_alive_secs * SCROLL_RAMP_RATE).min(MAX_SCROLL_SPEED);
     let scroll_delta = current_scroll_speed * time.delta_secs();
     depth_state.pixels_scrolled += scroll_delta;
+    let wall_depth_meters = depth_state.pixels_scrolled / PIXELS_PER_METER;
 
-    let mut top_y = f32::NEG_INFINITY;
-    for (_, transform) in &segment_query {
-        top_y = top_y.max(transform.translation.y);
+    let mut segments: Vec<(Entity, f32)> = segment_query
+        .iter()
+        .map(|(entity, transform)| (entity, transform.translation.y))
+        .collect();
+    segments.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let moves: Vec<(Entity, f32, bool)> = segments
+        .iter()
+        .map(|(entity, y)| {
+            let new_y = y - scroll_delta;
+            let below_screen = new_y + SEGMENT_HEIGHT * 0.5 < -SCREEN_HEIGHT * 0.5;
+            (*entity, new_y, below_screen)
+        })
+        .collect();
+
+    let mut ceiling = moves
+        .iter()
+        .filter(|(_, _, below)| !below)
+        .map(|(_, new_y, _)| *new_y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    if !ceiling.is_finite() {
+        ceiling = -SCREEN_HEIGHT * 0.5 + SEGMENT_HEIGHT * 0.5;
     }
 
-    for (entity, transform) in &segment_query {
-        let new_y = transform.translation.y - scroll_delta;
-        let below_screen = new_y + SEGMENT_HEIGHT * 0.5 < -SCREEN_HEIGHT * 0.5;
-
+    for (entity, new_y, below_screen) in moves {
         if below_screen {
             commands.entity(entity).despawn();
-            let spawn_y = top_y + SEGMENT_HEIGHT;
+            ceiling += SEGMENT_HEIGHT;
             let (next_gap_center_x, spawn_index) = next_segment_gap_center(cave_generation.as_mut());
             spawn_cave_segment(
                 &mut commands,
                 &mut meshes,
                 &mut materials,
-                spawn_y,
+                world_root.0,
+                ceiling,
                 next_gap_center_x,
-                spawn_index,
+                wall_depth_meters,
                 spawn_index % 2 == 0,
             );
-            top_y = spawn_y;
         } else {
             commands
                 .entity(entity)
@@ -1440,10 +1543,15 @@ fn detect_wall_collision(
     mut next_state: ResMut<NextState<GameState>>,
     mut screen_shake: ResMut<ScreenShake>,
     depth_state: Res<DepthState>,
-    bubble_query: Query<&Transform, With<RisingCircle>>,
+    bubble_query: Query<&Transform, (With<RisingCircle>, Without<WorldRoot>, Without<CaveSegment>)>,
     mut bubble_visibility_query: Query<&mut Visibility, With<RisingCircle>>,
-    segment_query: Query<(&Transform, &CaveSegment)>,
+    segment_query: Query<
+        (&Transform, &CaveSegment),
+        (Without<WorldRoot>, Without<RisingCircle>),
+    >,
     mut game_over_depth_query: Query<&mut Text, With<GameOverText>>,
+    mut world_root_query: WorldRootTransformQuery,
+    mut game_over_ui_query: Query<&mut Node, With<GameOverUi>>,
 ) {
     let Ok(bubble_transform) = bubble_query.single() else {
         return;
@@ -1452,25 +1560,18 @@ fn detect_wall_collision(
     let bubble_x = bubble_transform.translation.x;
     let bubble_y = bubble_transform.translation.y;
 
-    let segment_at_bubble = segment_query.iter().find(|(segment_transform, _)| {
-        let half_height = SEGMENT_HEIGHT * 0.5;
-        let min_y = segment_transform.translation.y - half_height;
-        let max_y = segment_transform.translation.y + half_height;
-        bubble_y >= min_y && bubble_y <= max_y
+    let hit_wall = segment_query.iter().any(|(transform, segment)| {
+        bubble_hits_segment_wall(bubble_x, bubble_y, transform, segment)
     });
-    let Some((_, segment)) = segment_at_bubble else {
-        return;
-    };
 
-    let left_inner_edge = segment.gap_center_x - GAP_WIDTH * 0.5;
-    let right_inner_edge = segment.gap_center_x + GAP_WIDTH * 0.5;
-
-    let hit_left_wall = bubble_x - BUBBLE_RADIUS <= left_inner_edge;
-    let hit_right_wall = bubble_x + BUBBLE_RADIUS >= right_inner_edge;
-
-    if hit_left_wall || hit_right_wall {
+    if hit_wall {
         screen_shake.trauma = 1.0;
         screen_shake.elapsed_secs = 0.0;
+        apply_screen_shake_offset(
+            screen_shake_offset(1.0),
+            &mut world_root_query,
+            &mut game_over_ui_query,
+        );
         if let Ok(mut bubble_visibility) = bubble_visibility_query.single_mut() {
             *bubble_visibility = Visibility::Hidden;
         }
