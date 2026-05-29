@@ -16,6 +16,14 @@ const PIXELS_PER_METER: f32 = 100.0;
 const HORIZONTAL_ACCELERATION: f32 = 900.0;
 const HORIZONTAL_MAX_SPEED: f32 = 420.0;
 
+#[derive(States, Debug, Clone, Eq, PartialEq, Hash, Default)]
+enum GameState {
+    #[default]
+    Menu,
+    Playing,
+    GameOver,
+}
+
 #[derive(Component)]
 struct RisingCircle;
 
@@ -28,15 +36,19 @@ struct CaveSegment {
 }
 
 #[derive(Component)]
-struct PopMessage;
+struct GameplayEntity;
 
 #[derive(Component)]
 struct DepthHud;
 
-#[derive(Resource, Default)]
-struct GameStatus {
-    popped: bool,
-}
+#[derive(Component)]
+struct MenuUi;
+
+#[derive(Component)]
+struct GameOverUi;
+
+#[derive(Component)]
+struct GameOverText;
 
 #[derive(Resource, Default)]
 struct CaveGeneration {
@@ -64,16 +76,26 @@ fn main() {
             }),
             ..default()
         }))
-        .init_resource::<GameStatus>()
+        .init_state::<GameState>()
         .init_resource::<CaveGeneration>()
         .init_resource::<DepthState>()
         .init_resource::<RunState>()
         .add_systems(Startup, setup)
-        .add_systems(Update, steer_circle)
-        .add_systems(Update, scroll_cave_segments)
-        .add_systems(Update, detect_wall_collision)
-        .add_systems(Update, update_depth_ui)
-        .add_systems(Update, restart_game)
+        .add_systems(OnEnter(GameState::Menu), enter_menu)
+        .add_systems(OnEnter(GameState::Playing), enter_playing)
+        .add_systems(OnEnter(GameState::GameOver), enter_game_over)
+        .add_systems(
+            Update,
+            (
+                steer_circle,
+                scroll_cave_segments,
+                detect_wall_collision,
+                update_depth_ui,
+            )
+                .run_if(in_state(GameState::Playing)),
+        )
+        .add_systems(Update, menu_input.run_if(in_state(GameState::Menu)))
+        .add_systems(Update, game_over_input.run_if(in_state(GameState::GameOver)))
         .run();
 }
 
@@ -96,25 +118,81 @@ fn setup(
         Transform::from_translation(BUBBLE_START),
         RisingCircle,
         HorizontalVelocity::default(),
+        GameplayEntity,
         Visibility::Visible,
     ));
     commands.spawn((
-        Text::new("You Popped!\nDepth: 0m\nPress R to restart"),
-        TextFont {
-            font_size: 56.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Percent(42.0),
             width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
             justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
             ..default()
         },
-        PopMessage,
+        GameOverUi,
         Visibility::Hidden,
-    ));
+    ))
+    .with_children(|parent| {
+        parent
+            .spawn((
+                Node {
+                    width: Val::Px(520.0),
+                    height: Val::Px(220.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.02, 0.02, 0.02, 0.78)),
+            ))
+            .with_children(|panel| {
+                panel.spawn((
+                    Text::new("You Popped!\nDepth: 0m\nPress R to restart"),
+                    TextFont {
+                        font_size: 48.0,
+                        ..default()
+                    },
+                    TextColor(Color::WHITE),
+                    Node {
+                        ..default()
+                    },
+                    GameOverText,
+                ));
+            });
+    });
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            flex_direction: FlexDirection::Column,
+            padding: UiRect::top(Val::Percent(18.0)),
+            row_gap: Val::Px(22.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.01, 0.01, 0.015, 1.0)),
+        MenuUi,
+        Visibility::Visible,
+    ))
+    .with_children(|parent| {
+        parent.spawn((
+            Text::new("PRESSURIZED"),
+            TextFont {
+                font_size: 86.0,
+                ..default()
+            },
+            TextColor(Color::WHITE),
+        ));
+        parent.spawn((
+            Text::new("Press SPACE to begin"),
+            TextFont {
+                font_size: 34.0,
+                ..default()
+            },
+            TextColor(Color::srgb(0.82, 0.85, 0.9)),
+        ));
+    });
     commands.spawn((
         Text::new("Depth: 0m"),
         TextFont {
@@ -130,6 +208,7 @@ fn setup(
             ..default()
         },
         DepthHud,
+        GameplayEntity,
         Visibility::Visible,
     ));
 }
@@ -154,6 +233,7 @@ fn spawn_cave_segment(
             CaveSegment { gap_center_x },
             Transform::from_xyz(0.0, y, 0.0),
             GlobalTransform::default(),
+            GameplayEntity,
             Visibility::Visible,
             InheritedVisibility::default(),
             ViewVisibility::default(),
@@ -210,16 +290,118 @@ fn next_gap_center(previous_gap_center_x: f32) -> f32 {
     unclamped.clamp(min_center, max_center)
 }
 
+fn enter_menu(
+    mut gameplay_query: Query<
+        &mut Visibility,
+        (With<GameplayEntity>, Without<MenuUi>, Without<GameOverUi>),
+    >,
+    mut menu_query: Query<
+        &mut Visibility,
+        (With<MenuUi>, Without<GameplayEntity>, Without<GameOverUi>),
+    >,
+    mut game_over_query: Query<
+        &mut Visibility,
+        (With<GameOverUi>, Without<GameplayEntity>, Without<MenuUi>),
+    >,
+) {
+    for mut visibility in &mut gameplay_query {
+        *visibility = Visibility::Hidden;
+    }
+    if let Ok(mut menu_visibility) = menu_query.single_mut() {
+        *menu_visibility = Visibility::Visible;
+    }
+    if let Ok(mut game_over_visibility) = game_over_query.single_mut() {
+        *game_over_visibility = Visibility::Hidden;
+    }
+}
+
+fn enter_playing(
+    mut commands: Commands,
+    mut cave_generation: ResMut<CaveGeneration>,
+    mut depth_state: ResMut<DepthState>,
+    mut run_state: ResMut<RunState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+    mut gameplay_query: Query<
+        &mut Visibility,
+        (With<GameplayEntity>, Without<MenuUi>, Without<GameOverUi>),
+    >,
+    mut menu_query: Query<
+        &mut Visibility,
+        (With<MenuUi>, Without<GameplayEntity>, Without<GameOverUi>),
+    >,
+    mut game_over_query: Query<
+        &mut Visibility,
+        (With<GameOverUi>, Without<GameplayEntity>, Without<MenuUi>),
+    >,
+    mut bubble_query: Query<(&mut Transform, &mut HorizontalVelocity), With<RisingCircle>>,
+    segment_query: Query<Entity, With<CaveSegment>>,
+    mut depth_hud_query: Query<&mut Text, With<DepthHud>>,
+) {
+    for entity in &segment_query {
+        commands.entity(entity).despawn();
+    }
+    reset_and_spawn_cave(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        cave_generation.as_mut(),
+    );
+
+    if let Ok((mut transform, mut velocity)) = bubble_query.single_mut() {
+        transform.translation = BUBBLE_START;
+        velocity.0 = 0.0;
+    }
+    if let Ok(mut depth_hud_text) = depth_hud_query.single_mut() {
+        *depth_hud_text = Text::new("Depth: 0m");
+    }
+
+    depth_state.pixels_scrolled = 0.0;
+    run_state.time_alive_secs = 0.0;
+
+    for mut visibility in &mut gameplay_query {
+        *visibility = Visibility::Visible;
+    }
+    if let Ok(mut menu_visibility) = menu_query.single_mut() {
+        *menu_visibility = Visibility::Hidden;
+    }
+    if let Ok(mut game_over_visibility) = game_over_query.single_mut() {
+        *game_over_visibility = Visibility::Hidden;
+    }
+}
+
+fn enter_game_over(
+    mut game_over_query: Query<&mut Visibility, (With<GameOverUi>, Without<DepthHud>)>,
+    mut depth_hud_query: Query<&mut Visibility, (With<DepthHud>, Without<GameOverUi>)>,
+) {
+    if let Ok(mut game_over_visibility) = game_over_query.single_mut() {
+        *game_over_visibility = Visibility::Visible;
+    }
+    if let Ok(mut depth_hud_visibility) = depth_hud_query.single_mut() {
+        *depth_hud_visibility = Visibility::Hidden;
+    }
+}
+
+fn menu_input(keyboard: Res<ButtonInput<KeyCode>>, mut next_state: ResMut<NextState<GameState>>) {
+    if keyboard.just_pressed(KeyCode::Space) {
+        next_state.set(GameState::Playing);
+    }
+}
+
+fn game_over_input(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyR) {
+        next_state.set(GameState::Playing);
+    }
+}
+
 fn steer_circle(
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
-    game_status: Res<GameStatus>,
     mut query: Query<(&mut Transform, &mut HorizontalVelocity), With<RisingCircle>>,
 ) {
-    if game_status.popped {
-        return;
-    }
-
     let damping = 0.97;
 
     for (mut transform, mut velocity) in &mut query {
@@ -242,7 +424,6 @@ fn steer_circle(
 
 fn scroll_cave_segments(
     time: Res<Time>,
-    game_status: Res<GameStatus>,
     mut depth_state: ResMut<DepthState>,
     mut run_state: ResMut<RunState>,
     mut commands: Commands,
@@ -251,10 +432,6 @@ fn scroll_cave_segments(
     mut cave_generation: ResMut<CaveGeneration>,
     segment_query: Query<(Entity, &Transform), With<CaveSegment>>,
 ) {
-    if game_status.popped {
-        return;
-    }
-
     run_state.time_alive_secs += time.delta_secs();
     let current_scroll_speed =
         (BASE_SCROLL_SPEED + run_state.time_alive_secs * SCROLL_RAMP_RATE).min(MAX_SCROLL_SPEED);
@@ -291,17 +468,13 @@ fn scroll_cave_segments(
 }
 
 fn detect_wall_collision(
-    mut game_status: ResMut<GameStatus>,
+    mut next_state: ResMut<NextState<GameState>>,
     depth_state: Res<DepthState>,
-    mut bubble_query: Query<(&Transform, &mut Visibility), With<RisingCircle>>,
+    bubble_query: Query<&Transform, With<RisingCircle>>,
     segment_query: Query<(&Transform, &CaveSegment)>,
-    mut pop_text_query: Query<(&mut Text, &mut Visibility), (With<PopMessage>, Without<RisingCircle>)>,
+    mut game_over_text_query: Query<&mut Text, With<GameOverText>>,
 ) {
-    if game_status.popped {
-        return;
-    }
-
-    let Ok((bubble_transform, mut bubble_visibility)) = bubble_query.single_mut() else {
+    let Ok(bubble_transform) = bubble_query.single() else {
         return;
     };
 
@@ -325,73 +498,23 @@ fn detect_wall_collision(
     let hit_right_wall = bubble_x + BUBBLE_RADIUS >= right_inner_edge;
 
     if hit_left_wall || hit_right_wall {
-        game_status.popped = true;
-        *bubble_visibility = Visibility::Hidden;
-        if let Ok((mut pop_text, mut text_visibility)) = pop_text_query.single_mut() {
+        if let Ok(mut game_over_text) = game_over_text_query.single_mut() {
             let depth_meters = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
-            *pop_text = Text::new(format!(
+            *game_over_text = Text::new(format!(
                 "You Popped!\nDepth: {}m\nPress R to restart",
                 depth_meters
             ));
-            *text_visibility = Visibility::Visible;
         }
+        next_state.set(GameState::GameOver);
     }
 }
 
 fn update_depth_ui(
-    game_status: Res<GameStatus>,
     depth_state: Res<DepthState>,
-    mut hud_query: Query<(&mut Text, &mut Visibility), With<DepthHud>>,
+    mut hud_query: Query<&mut Text, With<DepthHud>>,
 ) {
-    if let Ok((mut hud_text, mut hud_visibility)) = hud_query.single_mut() {
+    if let Ok(mut hud_text) = hud_query.single_mut() {
         let depth_meters = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
         *hud_text = Text::new(format!("Depth: {}m", depth_meters));
-        *hud_visibility = if game_status.popped {
-            Visibility::Hidden
-        } else {
-            Visibility::Visible
-        };
     }
-}
-
-fn restart_game(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut commands: Commands,
-    mut game_status: ResMut<GameStatus>,
-    mut depth_state: ResMut<DepthState>,
-    mut run_state: ResMut<RunState>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    mut cave_generation: ResMut<CaveGeneration>,
-    mut bubble_query: Query<(&mut Transform, &mut HorizontalVelocity, &mut Visibility), With<RisingCircle>>,
-    segment_query: Query<Entity, With<CaveSegment>>,
-    mut pop_text_query: Query<(&mut Text, &mut Visibility), (With<PopMessage>, Without<RisingCircle>)>,
-) {
-    if !game_status.popped || !keyboard.just_pressed(KeyCode::KeyR) {
-        return;
-    }
-
-    if let Ok((mut transform, mut velocity, mut visibility)) = bubble_query.single_mut() {
-        transform.translation = BUBBLE_START;
-        velocity.0 = 0.0;
-        *visibility = Visibility::Visible;
-    }
-    if let Ok((mut pop_text, mut text_visibility)) = pop_text_query.single_mut() {
-        *pop_text = Text::new("You Popped!\nDepth: 0m\nPress R to restart");
-        *text_visibility = Visibility::Hidden;
-    }
-
-    for entity in &segment_query {
-        commands.entity(entity).despawn();
-    }
-    reset_and_spawn_cave(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        cave_generation.as_mut(),
-    );
-
-    depth_state.pixels_scrolled = 0.0;
-    run_state.time_alive_secs = 0.0;
-    game_status.popped = false;
 }
