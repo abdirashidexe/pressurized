@@ -69,6 +69,18 @@ struct MenuStartButton;
 #[derive(Component)]
 struct RestartButton;
 
+#[derive(Component)]
+struct MenuHowToButton;
+
+#[derive(Component)]
+struct HowToModal;
+
+#[derive(Component)]
+struct CloseHowToButton;
+
+#[derive(Component)]
+struct MainMenuButton;
+
 #[derive(Resource)]
 struct UiTheme {
     menu_backdrop: Color,
@@ -171,9 +183,12 @@ fn main() {
         )
         .add_systems(Update, menu_input.run_if(in_state(GameState::Menu)))
         .add_systems(Update, menu_button_input.run_if(in_state(GameState::Menu)))
+        .add_systems(Update, menu_how_to_button_input.run_if(in_state(GameState::Menu)))
+        .add_systems(Update, menu_close_how_to_button_input.run_if(in_state(GameState::Menu)))
         .add_systems(Update, update_menu_bubbles.run_if(in_state(GameState::Menu)))
         .add_systems(Update, game_over_input.run_if(in_state(GameState::GameOver)))
         .add_systems(Update, game_over_button_input.run_if(in_state(GameState::GameOver)))
+        .add_systems(Update, game_over_menu_button_input.run_if(in_state(GameState::GameOver)))
         .add_systems(
             Update,
             (update_pop_particles, update_screen_shake).run_if(in_state(GameState::GameOver)),
@@ -239,7 +254,7 @@ fn setup(
             .spawn((
                 Node {
                     width: Val::Px(520.0),
-                    height: Val::Px(220.0),
+                    height: Val::Px(360.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
@@ -252,7 +267,7 @@ fn setup(
                     left: Val::Px(2.0),
                     top: Val::Px(2.0),
                         width: Val::Px(520.0),
-                        height: Val::Px(220.0),
+                        height: Val::Px(360.0),
                         border_radius: BorderRadius::all(Val::Px(18.0)),
                         ..default()
                     },
@@ -261,11 +276,11 @@ fn setup(
                 panel.spawn((
                     Node {
                         width: Val::Px(520.0),
-                        height: Val::Px(220.0),
+                        height: Val::Px(360.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(10.0),
+                        row_gap: Val::Px(8.0),
                         border_radius: BorderRadius::all(Val::Px(18.0)),
                         ..default()
                     },
@@ -275,7 +290,7 @@ fn setup(
                     card.spawn((
                         Text::new("You Popped!"),
                         TextFont {
-                            font_size: 48.0,
+                            font_size: 38.0,
                             font: poppins_semibold.clone(),
                             ..default()
                         },
@@ -284,7 +299,7 @@ fn setup(
                     card.spawn((
                         Text::new("Depth: 0m"),
                         TextFont {
-                            font_size: 48.0,
+                            font_size: 38.0,
                             font: poppins_regular.clone(),
                             ..default()
                         },
@@ -294,7 +309,7 @@ fn setup(
                     card.spawn((
                         Text::new("Press R to restart"),
                         TextFont {
-                            font_size: 30.0,
+                            font_size: 24.0,
                             font: poppins_regular.clone(),
                             ..default()
                         },
@@ -304,7 +319,7 @@ fn setup(
                         Button,
                         Node {
                             width: Val::Px(240.0),
-                            height: Val::Px(62.0),
+                            height: Val::Px(54.0),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             border_radius: BorderRadius::all(Val::Px(14.0)),
@@ -318,7 +333,32 @@ fn setup(
                         button.spawn((
                             Text::new("Restart"),
                             TextFont {
-                                font_size: 32.0,
+                                font_size: 24.0,
+                                font: poppins_semibold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.button_text),
+                        ));
+                    });
+                    card.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(240.0),
+                            height: Val::Px(54.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Px(14.0)),
+                            margin: UiRect::top(Val::Px(4.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ui_theme.button_fill),
+                        MainMenuButton,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("Main Menu"),
+                            TextFont {
+                                font_size: 24.0,
                                 font: poppins_semibold.clone(),
                                 ..default()
                             },
@@ -328,7 +368,7 @@ fn setup(
                     card.spawn((
                         Text::new("or press R"),
                         TextFont {
-                            font_size: 22.0,
+                            font_size: 18.0,
                             font: poppins_regular.clone(),
                             ..default()
                         },
@@ -381,7 +421,7 @@ fn setup(
         parent.spawn((
             Node {
                 width: Val::Px(760.0),
-                height: Val::Px(290.0),
+                height: Val::Px(430.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()
@@ -394,7 +434,7 @@ fn setup(
                     left: Val::Px(2.0),
                     top: Val::Px(2.0),
                     width: Val::Px(760.0),
-                    height: Val::Px(290.0),
+                    height: Val::Px(430.0),
                     border_radius: BorderRadius::all(Val::Px(26.0)),
                     ..default()
                 },
@@ -404,11 +444,11 @@ fn setup(
                 .spawn((
                     Node {
                         width: Val::Px(760.0),
-                        height: Val::Px(290.0),
+                        height: Val::Px(430.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(20.0),
+                        row_gap: Val::Px(14.0),
                         border_radius: BorderRadius::all(Val::Px(26.0)),
                         ..default()
                     },
@@ -418,7 +458,7 @@ fn setup(
                     card.spawn((
                         Text::new("PRESSURIZED"),
                         TextFont {
-                            font_size: 86.0,
+                            font_size: 72.0,
                             font: poppins_semibold.clone(),
                             ..default()
                         },
@@ -428,7 +468,7 @@ fn setup(
                         Button,
                         Node {
                             width: Val::Px(280.0),
-                            height: Val::Px(68.0),
+                            height: Val::Px(56.0),
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             border_radius: BorderRadius::all(Val::Px(14.0)),
@@ -442,7 +482,32 @@ fn setup(
                         button.spawn((
                             Text::new("Start Dive"),
                             TextFont {
-                                font_size: 32.0,
+                                font_size: 24.0,
+                                font: poppins_semibold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.button_text),
+                        ));
+                    });
+                    card.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(280.0),
+                            height: Val::Px(52.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Px(14.0)),
+                            margin: UiRect::top(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ui_theme.button_fill),
+                        MenuHowToButton,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("How to Play"),
+                            TextFont {
+                                font_size: 22.0,
                                 font: poppins_semibold.clone(),
                                 ..default()
                             },
@@ -452,7 +517,7 @@ fn setup(
                     card.spawn((
                         Text::new("or press SPACE"),
                         TextFont {
-                            font_size: 24.0,
+                            font_size: 18.0,
                             font: poppins_regular.clone(),
                             ..default()
                         },
@@ -460,6 +525,104 @@ fn setup(
                     ));
                 });
         });
+
+        parent
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.588, 0.722, 0.35)),
+                HowToModal,
+                Visibility::Hidden,
+            ))
+            .with_children(|overlay| {
+                overlay
+                    .spawn((
+                        Node {
+                            width: Val::Px(560.0),
+                            height: Val::Px(300.0),
+                            justify_content: JustifyContent::FlexStart,
+                            align_items: AlignItems::FlexStart,
+                            flex_direction: FlexDirection::Column,
+                            padding: UiRect::all(Val::Px(24.0)),
+                            row_gap: Val::Px(12.0),
+                            border_radius: BorderRadius::all(Val::Px(18.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ui_theme.panel_fill),
+                    ))
+                    .with_children(|modal| {
+                        modal.spawn((
+                            Button,
+                            Node {
+                                position_type: PositionType::Absolute,
+                                right: Val::Px(14.0),
+                                top: Val::Px(14.0),
+                                width: Val::Px(34.0),
+                                height: Val::Px(34.0),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                border_radius: BorderRadius::all(Val::Px(10.0)),
+                                ..default()
+                            },
+                            BackgroundColor(ui_theme.button_fill),
+                            CloseHowToButton,
+                        ))
+                        .with_children(|button| {
+                            button.spawn((
+                                Text::new("X"),
+                                TextFont {
+                                    font_size: 20.0,
+                                    font: poppins_semibold.clone(),
+                                    ..default()
+                                },
+                                TextColor(ui_theme.button_text),
+                            ));
+                        });
+
+                        modal.spawn((
+                            Text::new("How to Play"),
+                            TextFont {
+                                font_size: 30.0,
+                                font: poppins_semibold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.text_primary),
+                        ));
+                        modal.spawn((
+                            Text::new("1. Click Start Dive (or press SPACE)."),
+                            TextFont {
+                                font_size: 20.0,
+                                font: poppins_regular.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.text_secondary),
+                        ));
+                        modal.spawn((
+                            Text::new("2. Use LEFT/RIGHT arrows to steer the bubble."),
+                            TextFont {
+                                font_size: 20.0,
+                                font: poppins_regular.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.text_secondary),
+                        ));
+                        modal.spawn((
+                            Text::new("3. Stay in the gap and go deeper."),
+                            TextFont {
+                                font_size: 20.0,
+                                font: poppins_regular.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.text_secondary),
+                        ));
+                    });
+            });
     });
     commands.spawn((
         Node {
@@ -483,7 +646,7 @@ fn setup(
         hud.spawn((
             Text::new("Depth: 0m"),
             TextFont {
-                font_size: 36.0,
+                font_size: 30.0,
                 font: poppins_regular,
                 ..default()
             },
@@ -619,6 +782,15 @@ fn enter_menu(
         &mut Visibility,
         (With<GameOverUi>, Without<GameplayEntity>, Without<MenuUi>),
     >,
+    mut how_to_modal_query: Query<
+        &mut Visibility,
+        (
+            With<HowToModal>,
+            Without<GameplayEntity>,
+            Without<MenuUi>,
+            Without<GameOverUi>,
+        ),
+    >,
 ) {
     for mut visibility in &mut gameplay_query {
         *visibility = Visibility::Hidden;
@@ -628,6 +800,9 @@ fn enter_menu(
     }
     if let Ok(mut game_over_visibility) = game_over_query.single_mut() {
         *game_over_visibility = Visibility::Hidden;
+    }
+    if let Ok(mut modal_visibility) = how_to_modal_query.single_mut() {
+        *modal_visibility = Visibility::Hidden;
     }
 }
 
@@ -781,6 +956,50 @@ fn menu_button_input(
     }
 }
 
+fn menu_how_to_button_input(
+    mut query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>, With<MenuHowToButton>),
+    >,
+    mut modal_query: Query<&mut Visibility, With<HowToModal>>,
+    ui_theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(ui_theme.button_pressed);
+                if let Ok(mut modal_visibility) = modal_query.single_mut() {
+                    *modal_visibility = Visibility::Visible;
+                }
+            }
+            Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
+            Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
+        }
+    }
+}
+
+fn menu_close_how_to_button_input(
+    mut query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>, With<CloseHowToButton>),
+    >,
+    mut modal_query: Query<&mut Visibility, With<HowToModal>>,
+    ui_theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(ui_theme.button_pressed);
+                if let Ok(mut modal_visibility) = modal_query.single_mut() {
+                    *modal_visibility = Visibility::Hidden;
+                }
+            }
+            Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
+            Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
+        }
+    }
+}
+
 fn update_menu_bubbles(time: Res<Time>, mut query: Query<(&mut Node, &mut MenuBubble)>) {
     for (mut node, mut bubble) in &mut query {
         bubble.top_px -= bubble.speed * time.delta_secs();
@@ -814,6 +1033,26 @@ fn game_over_button_input(
             Interaction::Pressed => {
                 *color = BackgroundColor(ui_theme.button_pressed);
                 next_state.set(GameState::Playing);
+            }
+            Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
+            Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
+        }
+    }
+}
+
+fn game_over_menu_button_input(
+    mut query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>, With<MainMenuButton>),
+    >,
+    mut next_state: ResMut<NextState<GameState>>,
+    ui_theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(ui_theme.button_pressed);
+                next_state.set(GameState::Menu);
             }
             Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
             Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
