@@ -63,6 +63,12 @@ struct GameOverUi;
 #[derive(Component)]
 struct GameOverText;
 
+#[derive(Component)]
+struct MenuStartButton;
+
+#[derive(Component)]
+struct RestartButton;
+
 #[derive(Resource)]
 struct UiTheme {
     menu_backdrop: Color,
@@ -71,6 +77,10 @@ struct UiTheme {
     text_primary: Color,
     text_secondary: Color,
     hud_panel: Color,
+    button_fill: Color,
+    button_hover: Color,
+    button_pressed: Color,
+    button_text: Color,
 }
 
 impl Default for UiTheme {
@@ -82,6 +92,10 @@ impl Default for UiTheme {
             text_primary: Color::linear_rgba(0.89, 0.969, 0.949, 1.0),
             text_secondary: Color::linear_rgba(0.624, 0.898, 0.878, 1.0),
             hud_panel: Color::srgba(0.0, 0.702, 0.667, 0.58),
+            button_fill: Color::srgb(0.95, 0.92, 0.84),
+            button_hover: Color::srgb(0.98, 0.95, 0.87),
+            button_pressed: Color::srgb(0.89, 0.86, 0.77),
+            button_text: Color::srgb(0.0, 0.588, 0.722),
         }
     }
 }
@@ -156,8 +170,10 @@ fn main() {
                 .run_if(in_state(GameState::Playing)),
         )
         .add_systems(Update, menu_input.run_if(in_state(GameState::Menu)))
+        .add_systems(Update, menu_button_input.run_if(in_state(GameState::Menu)))
         .add_systems(Update, update_menu_bubbles.run_if(in_state(GameState::Menu)))
         .add_systems(Update, game_over_input.run_if(in_state(GameState::GameOver)))
+        .add_systems(Update, game_over_button_input.run_if(in_state(GameState::GameOver)))
         .add_systems(
             Update,
             (update_pop_particles, update_screen_shake).run_if(in_state(GameState::GameOver)),
@@ -278,7 +294,41 @@ fn setup(
                     card.spawn((
                         Text::new("Press R to restart"),
                         TextFont {
-                            font_size: 48.0,
+                            font_size: 30.0,
+                            font: poppins_regular.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_secondary),
+                    ));
+                    card.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(240.0),
+                            height: Val::Px(62.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Px(14.0)),
+                            margin: UiRect::top(Val::Px(6.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ui_theme.button_fill),
+                        RestartButton,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("Restart"),
+                            TextFont {
+                                font_size: 32.0,
+                                font: poppins_semibold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.button_text),
+                        ));
+                    });
+                    card.spawn((
+                        Text::new("or press R"),
+                        TextFont {
+                            font_size: 22.0,
                             font: poppins_regular.clone(),
                             ..default()
                         },
@@ -375,9 +425,34 @@ fn setup(
                         TextColor(ui_theme.text_primary),
                     ));
                     card.spawn((
-                        Text::new("Press SPACE to begin"),
+                        Button,
+                        Node {
+                            width: Val::Px(280.0),
+                            height: Val::Px(68.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Px(14.0)),
+                            margin: UiRect::top(Val::Px(6.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ui_theme.button_fill),
+                        MenuStartButton,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("Start Dive"),
+                            TextFont {
+                                font_size: 32.0,
+                                font: poppins_semibold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.button_text),
+                        ));
+                    });
+                    card.spawn((
+                        Text::new("or press SPACE"),
                         TextFont {
-                            font_size: 34.0,
+                            font_size: 24.0,
                             font: poppins_regular.clone(),
                             ..default()
                         },
@@ -686,6 +761,26 @@ fn menu_input(keyboard: Res<ButtonInput<KeyCode>>, mut next_state: ResMut<NextSt
     }
 }
 
+fn menu_button_input(
+    mut query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>, With<MenuStartButton>),
+    >,
+    mut next_state: ResMut<NextState<GameState>>,
+    ui_theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(ui_theme.button_pressed);
+                next_state.set(GameState::Playing);
+            }
+            Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
+            Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
+        }
+    }
+}
+
 fn update_menu_bubbles(time: Res<Time>, mut query: Query<(&mut Node, &mut MenuBubble)>) {
     for (mut node, mut bubble) in &mut query {
         bubble.top_px -= bubble.speed * time.delta_secs();
@@ -703,6 +798,26 @@ fn game_over_input(
 ) {
     if keyboard.just_pressed(KeyCode::KeyR) {
         next_state.set(GameState::Playing);
+    }
+}
+
+fn game_over_button_input(
+    mut query: Query<
+        (&Interaction, &mut BackgroundColor),
+        (Changed<Interaction>, With<Button>, With<RestartButton>),
+    >,
+    mut next_state: ResMut<NextState<GameState>>,
+    ui_theme: Res<UiTheme>,
+) {
+    for (interaction, mut color) in &mut query {
+        match *interaction {
+            Interaction::Pressed => {
+                *color = BackgroundColor(ui_theme.button_pressed);
+                next_state.set(GameState::Playing);
+            }
+            Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
+            Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
+        }
     }
 }
 
