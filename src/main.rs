@@ -19,10 +19,12 @@ const HORIZONTAL_ACCELERATION: f32 = 900.0;
 const HORIZONTAL_MAX_SPEED: f32 = 420.0;
 const TOOTH_DEPTH: f32 = 35.0;
 const TOOTH_HEIGHT: f32 = SEGMENT_HEIGHT * 0.5;
+const WALL_VISUAL_HEIGHT: f32 = SEGMENT_HEIGHT + 8.0;
 const POP_PARTICLE_COUNT: u32 = 16;
 const POP_PARTICLE_LIFETIME: f32 = 0.5;
 const SCREEN_SHAKE_MAX_OFFSET: f32 = 18.0;
 const SCREEN_SHAKE_DURATION: f32 = 0.3;
+const MENU_BUBBLE_COUNT: u32 = 20;
 
 #[derive(States, Debug, Clone, Eq, PartialEq, Hash, Default)]
 enum GameState {
@@ -57,6 +59,13 @@ struct GameOverUi;
 
 #[derive(Component)]
 struct GameOverText;
+
+#[derive(Component)]
+struct MenuBubble {
+    top_px: f32,
+    speed: f32,
+    size: f32,
+}
 
 #[derive(Component)]
 struct PopParticle {
@@ -120,6 +129,7 @@ fn main() {
                 .run_if(in_state(GameState::Playing)),
         )
         .add_systems(Update, menu_input.run_if(in_state(GameState::Menu)))
+        .add_systems(Update, update_menu_bubbles.run_if(in_state(GameState::Menu)))
         .add_systems(Update, game_over_input.run_if(in_state(GameState::GameOver)))
         .add_systems(
             Update,
@@ -241,6 +251,29 @@ fn setup(
         Visibility::Visible,
     ))
     .with_children(|parent| {
+        for _ in 0..MENU_BUBBLE_COUNT {
+            let size = fastrand::f32() * 14.0 + 8.0;
+            let left_px = fastrand::f32() * SCREEN_WIDTH;
+            let top_px = fastrand::f32() * SCREEN_HEIGHT;
+            let speed = fastrand::f32() * 28.0 + 18.0;
+
+            parent.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(left_px),
+                    top: Val::Px(top_px),
+                    width: Val::Px(size),
+                    height: Val::Px(size),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.75, 0.9, 1.0, 0.22)),
+                MenuBubble {
+                    top_px,
+                    speed,
+                    size,
+                },
+            ));
+        }
         parent.spawn((
             Text::new("PRESSURIZED"),
             TextFont {
@@ -309,12 +342,12 @@ fn spawn_cave_segment(
         ))
         .with_children(|parent| {
             parent.spawn((
-                Mesh2d(meshes.add(Rectangle::new(left_wall_width, SEGMENT_HEIGHT))),
+                Mesh2d(meshes.add(Rectangle::new(left_wall_width, WALL_VISUAL_HEIGHT))),
                 MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
                 Transform::from_xyz(left_wall_x, 0.0, 0.0),
             ));
             parent.spawn((
-                Mesh2d(meshes.add(Rectangle::new(right_wall_width, SEGMENT_HEIGHT))),
+                Mesh2d(meshes.add(Rectangle::new(right_wall_width, WALL_VISUAL_HEIGHT))),
                 MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
                 Transform::from_xyz(right_wall_x, 0.0, 0.0),
             ));
@@ -542,6 +575,17 @@ fn enter_game_over(
 fn menu_input(keyboard: Res<ButtonInput<KeyCode>>, mut next_state: ResMut<NextState<GameState>>) {
     if keyboard.just_pressed(KeyCode::Space) {
         next_state.set(GameState::Playing);
+    }
+}
+
+fn update_menu_bubbles(time: Res<Time>, mut query: Query<(&mut Node, &mut MenuBubble)>) {
+    for (mut node, mut bubble) in &mut query {
+        bubble.top_px -= bubble.speed * time.delta_secs();
+        if bubble.top_px < -bubble.size {
+            bubble.top_px = SCREEN_HEIGHT + bubble.size;
+            node.left = Val::Px(fastrand::f32() * SCREEN_WIDTH);
+        }
+        node.top = Val::Px(bubble.top_px);
     }
 }
 
