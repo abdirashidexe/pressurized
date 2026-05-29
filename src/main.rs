@@ -6,11 +6,15 @@ const GAP_WIDTH: f32 = 250.0;
 const BUBBLE_RADIUS: f32 = 30.0;
 const BUBBLE_START: Vec3 = Vec3::new(0.0, -150.0, 0.0);
 const SEGMENT_HEIGHT: f32 = 120.0;
-const SCROLL_SPEED: f32 = 150.0;
+const BASE_SCROLL_SPEED: f32 = 150.0;
+const SCROLL_RAMP_RATE: f32 = 9.0;
+const MAX_SCROLL_SPEED: f32 = 450.0;
 const GAP_DRIFT_PER_SEGMENT: f32 = 70.0;
 const GAP_MARGIN: f32 = 80.0;
 const CENTERED_START_SEGMENTS: u32 = 4;
 const PIXELS_PER_METER: f32 = 100.0;
+const HORIZONTAL_ACCELERATION: f32 = 900.0;
+const HORIZONTAL_MAX_SPEED: f32 = 420.0;
 
 #[derive(Component)]
 struct RisingCircle;
@@ -45,6 +49,11 @@ struct DepthState {
     pixels_scrolled: f32,
 }
 
+#[derive(Resource, Default)]
+struct RunState {
+    time_alive_secs: f32,
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
@@ -58,6 +67,7 @@ fn main() {
         .init_resource::<GameStatus>()
         .init_resource::<CaveGeneration>()
         .init_resource::<DepthState>()
+        .init_resource::<RunState>()
         .add_systems(Startup, setup)
         .add_systems(Update, steer_circle)
         .add_systems(Update, scroll_cave_segments)
@@ -210,8 +220,7 @@ fn steer_circle(
         return;
     }
 
-    let acceleration = 220.0;
-    let damping = 0.92;
+    let damping = 0.97;
 
     for (mut transform, mut velocity) in &mut query {
         let mut direction = 0.0;
@@ -222,7 +231,10 @@ fn steer_circle(
             direction += 1.0;
         }
 
-        velocity.0 += direction * acceleration * time.delta_secs();
+        velocity.0 += direction * HORIZONTAL_ACCELERATION * time.delta_secs();
+        velocity.0 = velocity
+            .0
+            .clamp(-HORIZONTAL_MAX_SPEED, HORIZONTAL_MAX_SPEED);
         velocity.0 *= damping;
         transform.translation.x += velocity.0 * time.delta_secs();
     }
@@ -232,6 +244,7 @@ fn scroll_cave_segments(
     time: Res<Time>,
     game_status: Res<GameStatus>,
     mut depth_state: ResMut<DepthState>,
+    mut run_state: ResMut<RunState>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
@@ -242,7 +255,10 @@ fn scroll_cave_segments(
         return;
     }
 
-    let scroll_delta = SCROLL_SPEED * time.delta_secs();
+    run_state.time_alive_secs += time.delta_secs();
+    let current_scroll_speed =
+        (BASE_SCROLL_SPEED + run_state.time_alive_secs * SCROLL_RAMP_RATE).min(MAX_SCROLL_SPEED);
+    let scroll_delta = current_scroll_speed * time.delta_secs();
     depth_state.pixels_scrolled += scroll_delta;
 
     let mut top_y = f32::NEG_INFINITY;
@@ -343,6 +359,7 @@ fn restart_game(
     mut commands: Commands,
     mut game_status: ResMut<GameStatus>,
     mut depth_state: ResMut<DepthState>,
+    mut run_state: ResMut<RunState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut cave_generation: ResMut<CaveGeneration>,
@@ -375,5 +392,6 @@ fn restart_game(
     );
 
     depth_state.pixels_scrolled = 0.0;
+    run_state.time_alive_secs = 0.0;
     game_status.popped = false;
 }
