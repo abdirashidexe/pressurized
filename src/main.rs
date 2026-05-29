@@ -32,7 +32,11 @@ const FADE_DURATION: f32 = 0.18;
 const DEPTH_COLOR_RAMP_METERS: f32 = 100.0;
 const METERS_PER_SEGMENT: f32 = SEGMENT_HEIGHT / PIXELS_PER_METER;
 const MAX_RECENT_RUNS: usize = 5;
-const SCORES_FILE: &str = "pressurized_scores.txt";
+const MAX_PROFILES: usize = 8;
+const MAX_LEADERBOARD_ROWS: usize = 5;
+const MAX_NAME_LEN: usize = 16;
+const PROFILES_FILE: &str = "pressurized_profiles.txt";
+const LEGACY_SCORES_FILE: &str = "pressurized_scores.txt";
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
@@ -74,8 +78,11 @@ struct GameOverUi;
 #[derive(Component)]
 struct GameOverText;
 
-#[derive(Component)]
-struct GameOverNewBest;
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum GameOverBanner {
+    NewBest,
+    HouseRecord,
+}
 
 #[derive(Component)]
 struct GameOverBestText;
@@ -83,24 +90,120 @@ struct GameOverBestText;
 #[derive(Component)]
 struct GameOverRunHistory;
 
-#[derive(Resource, Default)]
-struct RunRecords {
+#[derive(Component)]
+struct GameOverPlayerLine;
+
+#[derive(Clone)]
+struct PlayerProfile {
+    name: String,
     best_depth_m: i32,
     recent_depths: Vec<i32>,
 }
 
-impl RunRecords {
-    fn load() -> Self {
-        let Ok(content) = fs::read_to_string(SCORES_FILE) else {
-            return Self::default();
-        };
+#[derive(Resource, Default)]
+struct ActivePlayer(pub Option<String>);
 
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum MenuScreen {
+    #[default]
+    Main,
+    Welcome,
+    SwitchPlayer,
+    EnterName,
+}
+
+#[derive(Resource, Default)]
+struct MenuScreenState {
+    screen: MenuScreen,
+    name_buffer: String,
+    name_error: Option<String>,
+}
+
+struct RecordRunResult {
+    new_personal_best: bool,
+    new_house_record: bool,
+    rank: usize,
+}
+
+#[derive(Resource, Default)]
+struct PlayerDatabase {
+    last_player: Option<String>,
+    profiles: Vec<PlayerProfile>,
+}
+
+enum ProfileError {
+    EmptyName,
+    NameTooLong,
+    InvalidCharacter,
+    DuplicateName,
+    ProfileCapReached,
+}
+
+impl ProfileError {
+    fn message(&self) -> &'static str {
+        match self {
+            Self::EmptyName => "Enter a name to continue.",
+            Self::NameTooLong => "Name is too long.",
+            Self::InvalidCharacter => "Use letters, numbers, spaces, or dashes only.",
+            Self::DuplicateName => "That name is already taken.",
+            Self::ProfileCapReached => "Profile list is full.",
+        }
+    }
+}
+
+impl PlayerDatabase {
+    fn load() -> Self {
+        if let Ok(content) = fs::read_to_string(PROFILES_FILE) {
+            if let Some(db) = Self::parse_v2(&content) {
+                return db;
+            }
+        }
+
+        let mut db = Self::default();
+        if let Ok(content) = fs::read_to_string(LEGACY_SCORES_FILE) {
+            if let Some(legacy) = Self::parse_legacy(&content) {
+                db.profiles.push(legacy);
+                db.last_player = db.profiles.first().map(|p| p.name.clone());
+                let _ = db.save();
+            }
+        }
+        db
+    }
+
+    fn parse_v2(content: &str) -> Option<Self> {
+        let mut lines = content.lines();
+        if lines.next()? != "v2" {
+            return None;
+        }
+
+        let last_player = lines
+            .next()
+            .and_then(|line| line.strip_prefix("last="))
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty());
+
+        let mut profiles = Vec::new();
+        for line in lines {
+            if line.trim().is_empty() {
+                continue;
+            }
+            if let Some(profile) = Self::parse_profile_line(line) {
+                profiles.push(profile);
+            }
+        }
+
+        Some(Self {
+            last_player,
+            profiles,
+        })
+    }
+
+    fn parse_legacy(content: &str) -> Option<PlayerProfile> {
         let mut lines = content.lines();
         let best_depth_m = lines
             .next()
             .and_then(|line| line.strip_prefix("best="))
-            .and_then(|value| value.trim().parse().ok())
-            .unwrap_or(0);
+            .and_then(|value| value.trim().parse().ok())?;
         let recent_depths = lines
             .next()
             .map(|line| {
@@ -111,35 +214,199 @@ impl RunRecords {
             })
             .unwrap_or_default();
 
-        Self {
+        Some(PlayerProfile {
+            name: "Player".to_string(),
             best_depth_m,
             recent_depths,
+        })
+    }
+
+    fn parse_profile_line(line: &str) -> Option<PlayerProfile> {
+        let mut parts = line.split('|');
+        let name = parts.next()?.trim().to_string();
+        if name.is_empty() {
+            return None;
         }
+        let best_depth_m = parts.next()?.trim().parse().ok()?;
+        let recent_depths = parts
+            .next()
+            .map(|recent| {
+                recent
+                    .split(',')
+                    .filter(|value| !value.is_empty())
+                    .filter_map(|value| value.parse().ok())
+                    .take(MAX_RECENT_RUNS)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Some(PlayerProfile {
+            name,
+            best_depth_m,
+            recent_depths,
+        })
     }
 
     fn save(&self) -> io::Result<()> {
-        let recent = self
-            .recent_depths
-            .iter()
-            .map(|depth| depth.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        let content = format!("best={}\n{}", self.best_depth_m, recent);
-        fs::write(SCORES_FILE, content)?;
+        let mut lines = vec!["v2".to_string()];
+        if let Some(last) = &self.last_player {
+            lines.push(format!("last={last}"));
+        } else {
+            lines.push("last=".to_string());
+        }
+        for profile in &self.profiles {
+            let recent = profile
+                .recent_depths
+                .iter()
+                .map(|depth| depth.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            lines.push(format!(
+                "{}|{}|{recent}",
+                profile.name, profile.best_depth_m
+            ));
+        }
+        fs::write(PROFILES_FILE, lines.join("\n"))?;
         Ok(())
     }
 
-    fn record_run(&mut self, depth_m: i32) -> io::Result<bool> {
-        let new_best = depth_m > self.best_depth_m;
-        if new_best {
-            self.best_depth_m = depth_m;
+    fn normalize_name(name: &str) -> Option<String> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return None;
         }
-
-        self.recent_depths.insert(0, depth_m);
-        self.recent_depths.truncate(MAX_RECENT_RUNS);
-        self.save()?;
-        Ok(new_best)
+        if trimmed.len() > MAX_NAME_LEN {
+            return None;
+        }
+        if !trimmed
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == ' ' || ch == '-' || ch == '_')
+        {
+            return None;
+        }
+        Some(trimmed.to_string())
     }
+
+    fn validate_new_name(&self, name: &str) -> Result<String, ProfileError> {
+        let normalized = Self::normalize_name(name).ok_or(match name.trim().len() {
+            0 => ProfileError::EmptyName,
+            n if n > MAX_NAME_LEN => ProfileError::NameTooLong,
+            _ => ProfileError::InvalidCharacter,
+        })?;
+        if self.profiles.iter().any(|profile| profile.name.eq_ignore_ascii_case(&normalized)) {
+            return Err(ProfileError::DuplicateName);
+        }
+        if self.profiles.len() >= MAX_PROFILES {
+            return Err(ProfileError::ProfileCapReached);
+        }
+        Ok(normalized)
+    }
+
+    fn add_player(&mut self, name: &str) -> Result<String, ProfileError> {
+        let normalized = self.validate_new_name(name)?;
+        self.profiles.push(PlayerProfile {
+            name: normalized.clone(),
+            best_depth_m: 0,
+            recent_depths: Vec::new(),
+        });
+        self.last_player = Some(normalized.clone());
+        let _ = self.save();
+        Ok(normalized)
+    }
+
+    fn select_player(&mut self, name: &str) -> bool {
+        let exists = self
+            .profiles
+            .iter()
+            .any(|profile| profile.name == name);
+        if exists {
+            self.last_player = Some(name.to_string());
+            let _ = self.save();
+        }
+        exists
+    }
+
+    fn profile(&self, name: &str) -> Option<&PlayerProfile> {
+        self.profiles.iter().find(|profile| profile.name == name)
+    }
+
+    fn leaderboard(&self) -> Vec<&PlayerProfile> {
+        let mut rows: Vec<&PlayerProfile> = self.profiles.iter().collect();
+        rows.sort_by(|a, b| {
+            b.best_depth_m
+                .cmp(&a.best_depth_m)
+                .then_with(|| a.name.cmp(&b.name))
+        });
+        rows
+    }
+
+    fn house_best(&self) -> i32 {
+        self.leaderboard()
+            .first()
+            .map(|profile| profile.best_depth_m)
+            .unwrap_or(0)
+    }
+
+    fn rank_of(&self, name: &str) -> Option<usize> {
+        self.leaderboard()
+            .iter()
+            .position(|profile| profile.name == name)
+            .map(|index| index + 1)
+    }
+
+    fn record_run(&mut self, name: &str, depth_m: i32) -> io::Result<RecordRunResult> {
+        let house_best_before = self.house_best();
+        let Some(profile) = self.profiles.iter_mut().find(|profile| profile.name == name) else {
+            return Ok(RecordRunResult {
+                new_personal_best: false,
+                new_house_record: false,
+                rank: 0,
+            });
+        };
+
+        let new_personal_best = depth_m > profile.best_depth_m;
+        if new_personal_best {
+            profile.best_depth_m = depth_m;
+        }
+        profile.recent_depths.insert(0, depth_m);
+        profile.recent_depths.truncate(MAX_RECENT_RUNS);
+        self.last_player = Some(name.to_string());
+        self.save()?;
+
+        let rank = self.rank_of(name).unwrap_or(0);
+        let new_house_record = depth_m > house_best_before;
+        Ok(RecordRunResult {
+            new_personal_best,
+            new_house_record,
+            rank,
+        })
+    }
+}
+
+fn format_leaderboard_lines(database: &PlayerDatabase, highlight: Option<&str>) -> String {
+    let rows = database.leaderboard();
+    if rows.is_empty() {
+        return "Leaderboard: —".to_string();
+    }
+
+    rows.iter()
+        .take(MAX_LEADERBOARD_ROWS)
+        .enumerate()
+        .map(|(index, profile)| {
+            let marker = if highlight == Some(profile.name.as_str()) {
+                " <-"
+            } else {
+                ""
+            };
+            format!(
+                "#{} {} — {}m{marker}",
+                index + 1,
+                profile.name,
+                profile.best_depth_m
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn format_run_history(recent_depths: &[i32]) -> String {
@@ -153,6 +420,53 @@ fn format_run_history(recent_depths: &[i32]) -> String {
         .collect::<Vec<_>>()
         .join(" · ");
     format!("Recent: {depths}")
+}
+
+#[derive(Component, Clone, Copy)]
+enum ProfileUiVisibility {
+    Overlay,
+    WelcomePanel,
+    SwitchPanel,
+    NameEntryPanel,
+    MainPanel,
+    PickButton(usize),
+}
+
+#[derive(Component, Clone, Copy)]
+enum ProfileMenuText {
+    WelcomeTitle,
+    WelcomeLeaderboard,
+    SwitchLeaderboard,
+    PlayingAs,
+    NameField,
+    NameError,
+    PickLabel(usize),
+}
+
+#[derive(Component)]
+struct MainMenuPanel;
+
+#[derive(Component)]
+struct ProfileOverlay;
+
+#[derive(Component)]
+struct WelcomePanel;
+
+#[derive(Component)]
+struct SwitchPanel;
+
+#[derive(Component)]
+struct NameEntryPanel;
+
+#[derive(Component, Clone, Copy)]
+enum ProfileMenuButtonAction {
+    Play,
+    SwitchPlayer,
+    AddPlayer,
+    BackFromSwitch,
+    ConfirmName,
+    CancelName,
+    PickProfile(usize),
 }
 
 #[derive(Component)]
@@ -333,14 +647,23 @@ fn main() {
         .init_resource::<RunState>()
         .init_resource::<ScreenShake>()
         .init_resource::<FadeTransition>()
-        .insert_resource(RunRecords::load())
+        .insert_resource(PlayerDatabase::load())
+        .init_resource::<ActivePlayer>()
+        .init_resource::<MenuScreenState>()
         .init_resource::<UiTheme>()
         .add_systems(Startup, setup)
-        .add_systems(OnEnter(GameState::Menu), enter_menu)
-        .add_systems(OnEnter(GameState::Playing), (enter_playing, reset_new_best_banner))
+        .add_systems(
+            OnEnter(GameState::Menu),
+            (enter_menu, open_menu_screen, sync_menu_profile_visibility).chain(),
+        )
+        .add_systems(OnExit(GameState::Menu), hide_all_menu_ui)
+        .add_systems(
+            OnEnter(GameState::Playing),
+            (hide_all_menu_ui, enter_playing, reset_new_best_banner).chain(),
+        )
         .add_systems(
             OnEnter(GameState::GameOver),
-            (record_game_over_run, enter_game_over).chain(),
+            (hide_all_menu_ui, record_game_over_run, enter_game_over).chain(),
         )
         .add_systems(
             Update,
@@ -367,6 +690,15 @@ fn main() {
         .add_systems(Update, menu_how_to_button_input.run_if(in_state(GameState::Menu)))
         .add_systems(Update, menu_close_how_to_button_input.run_if(in_state(GameState::Menu)))
         .add_systems(Update, update_menu_bubbles.run_if(in_state(GameState::Menu)))
+        .add_systems(
+            Update,
+            (
+                profile_menu_button_input,
+                profile_name_keyboard_input,
+                refresh_profile_menu_ui,
+            )
+                .run_if(in_state(GameState::Menu)),
+        )
         .add_systems(
             Update,
             game_over_input.run_if(in_state(GameState::GameOver).and(not(fade_transition_active))),
@@ -518,6 +850,16 @@ fn setup(
                         GameOverText,
                     ));
                     card.spawn((
+                        Text::new("Alex · Rank #1"),
+                        TextFont {
+                            font_size: 20.0,
+                            font: comic_bold.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_secondary),
+                        GameOverPlayerLine,
+                    ));
+                    card.spawn((
                         Text::new("New Best!"),
                         TextFont {
                             font_size: 26.0,
@@ -525,7 +867,18 @@ fn setup(
                             ..default()
                         },
                         TextColor(ui_theme.text_primary),
-                        GameOverNewBest,
+                        GameOverBanner::NewBest,
+                        Visibility::Hidden,
+                    ));
+                    card.spawn((
+                        Text::new("New House Record!"),
+                        TextFont {
+                            font_size: 22.0,
+                            font: comic_bold_italic.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_primary),
+                        GameOverBanner::HouseRecord,
                         Visibility::Hidden,
                     ));
                     card.spawn((
@@ -697,8 +1050,20 @@ fn setup(
                         ..default()
                     },
                     BackgroundColor(ui_theme.panel_fill),
+                    MainMenuPanel,
+                    ProfileUiVisibility::MainPanel,
                 ))
                 .with_children(|card| {
+                    card.spawn((
+                        Text::new("Playing as —"),
+                        TextFont {
+                            font_size: 18.0,
+                            font: comic_bold.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_secondary),
+                        ProfileMenuText::PlayingAs,
+                    ));
                     card.spawn((
                         Node {
                             flex_direction: FlexDirection::Row,
@@ -817,6 +1182,31 @@ fn setup(
                         ));
                     });
                     card.spawn((
+                        Button,
+                        Node {
+                            width: Val::Px(280.0),
+                            height: Val::Px(52.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Px(14.0)),
+                            margin: UiRect::top(Val::Px(2.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ui_theme.button_fill),
+                        ProfileMenuButtonAction::SwitchPlayer,
+                    ))
+                    .with_children(|button| {
+                        button.spawn((
+                            Text::new("Switch Player"),
+                            TextFont {
+                                font_size: 20.0,
+                                font: comic_bold.clone(),
+                                ..default()
+                            },
+                            TextColor(ui_theme.button_text),
+                        ));
+                    });
+                    card.spawn((
                         Text::new("This game will cost you a $499/mo subscription soon so enjoy will it lasts..."),
                         TextFont {
                             font_size: 13.0,
@@ -827,6 +1217,339 @@ fn setup(
                     ));
                 });
         });
+
+        parent
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                ProfileOverlay,
+                ProfileUiVisibility::Overlay,
+                Visibility::Hidden,
+            ))
+            .with_children(|overlay| {
+                overlay
+                    .spawn((
+                        Node {
+                            width: Val::Px(520.0),
+                            max_width: Val::Percent(92.0),
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::Center,
+                            row_gap: Val::Px(10.0),
+                            padding: UiRect::all(Val::Px(24.0)),
+                            border_radius: BorderRadius::all(Val::Px(22.0)),
+                            ..default()
+                        },
+                        BackgroundColor(ui_theme.panel_fill),
+                    ))
+                    .with_children(|panel| {
+                        panel
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::Center,
+                                    row_gap: Val::Px(10.0),
+                                    ..default()
+                                },
+                                WelcomePanel,
+                                ProfileUiVisibility::WelcomePanel,
+                                Visibility::Hidden,
+                            ))
+                            .with_children(|welcome| {
+                                welcome.spawn((
+                                    Text::new("Welcome back!"),
+                                    TextFont {
+                                        font_size: 34.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_primary),
+                                    ProfileMenuText::WelcomeTitle,
+                                ));
+                                welcome.spawn((
+                                    Text::new("Leaderboard:\n—"),
+                                    TextFont {
+                                        font_size: 17.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_secondary),
+                                    ProfileMenuText::WelcomeLeaderboard,
+                                ));
+                                welcome.spawn((
+                                    Button,
+                                    Node {
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(58.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        border_radius: BorderRadius::all(Val::Px(14.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(ui_theme.button_fill),
+                                    ProfileMenuButtonAction::Play,
+                                ))
+                                .with_children(|button| {
+                                    button.spawn((
+                                        Text::new("Play"),
+                                        TextFont {
+                                            font_size: 24.0,
+                                            font: comic_bold.clone(),
+                                            ..default()
+                                        },
+                                        TextColor(ui_theme.button_text),
+                                    ));
+                                });
+                                welcome.spawn((
+                                    Button,
+                                    Node {
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(48.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        border_radius: BorderRadius::all(Val::Px(14.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(ui_theme.button_fill),
+                                    ProfileMenuButtonAction::SwitchPlayer,
+                                ))
+                                .with_children(|button| {
+                                    button.spawn((
+                                        Text::new("Switch Player"),
+                                        TextFont {
+                                            font_size: 20.0,
+                                            font: comic_bold.clone(),
+                                            ..default()
+                                        },
+                                        TextColor(ui_theme.button_text),
+                                    ));
+                                });
+                            });
+
+                        panel
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::Center,
+                                    row_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                SwitchPanel,
+                                ProfileUiVisibility::SwitchPanel,
+                                Visibility::Hidden,
+                            ))
+                            .with_children(|switch| {
+                                switch.spawn((
+                                    Text::new("Pick a player"),
+                                    TextFont {
+                                        font_size: 30.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_primary),
+                                ));
+                                switch.spawn((
+                                    Text::new("Leaderboard:\n—"),
+                                    TextFont {
+                                        font_size: 17.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_secondary),
+                                    ProfileMenuText::SwitchLeaderboard,
+                                ));
+                                switch.spawn((
+                                    Node {
+                                        flex_direction: FlexDirection::Column,
+                                        align_items: AlignItems::Center,
+                                        row_gap: Val::Px(6.0),
+                                        max_height: Val::Px(220.0),
+                                        overflow: Overflow::scroll_y(),
+                                        ..default()
+                                    },
+                                ))
+                                .with_children(|pickers| {
+                                    for slot in 0..MAX_PROFILES {
+                                        pickers.spawn((
+                                            Button,
+                                            Node {
+                                                width: Val::Px(320.0),
+                                                height: Val::Px(40.0),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                border_radius: BorderRadius::all(Val::Px(10.0)),
+                                                ..default()
+                                            },
+                                            BackgroundColor(ui_theme.button_fill),
+                                            ProfileUiVisibility::PickButton(slot),
+                                            ProfileMenuButtonAction::PickProfile(slot),
+                                            Visibility::Hidden,
+                                        ))
+                                        .with_children(|button| {
+                                            button.spawn((
+                                                Text::new("—"),
+                                                TextFont {
+                                                    font_size: 18.0,
+                                                    font: comic_bold.clone(),
+                                                    ..default()
+                                                },
+                                                TextColor(ui_theme.button_text),
+                                                ProfileMenuText::PickLabel(slot),
+                                            ));
+                                        });
+                                    }
+                                });
+                                switch.spawn((
+                                    Button,
+                                    Node {
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(46.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        border_radius: BorderRadius::all(Val::Px(14.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(ui_theme.button_fill),
+                                    ProfileMenuButtonAction::AddPlayer,
+                                ))
+                                .with_children(|button| {
+                                    button.spawn((
+                                        Text::new("Add New Player"),
+                                        TextFont {
+                                            font_size: 20.0,
+                                            font: comic_bold.clone(),
+                                            ..default()
+                                        },
+                                        TextColor(ui_theme.button_text),
+                                    ));
+                                });
+                                switch.spawn((
+                                    Button,
+                                    Node {
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(42.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        border_radius: BorderRadius::all(Val::Px(14.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(ui_theme.button_fill),
+                                    ProfileMenuButtonAction::BackFromSwitch,
+                                ))
+                                .with_children(|button| {
+                                    button.spawn((
+                                        Text::new("Back"),
+                                        TextFont {
+                                            font_size: 18.0,
+                                            font: comic_bold.clone(),
+                                            ..default()
+                                        },
+                                        TextColor(ui_theme.button_text),
+                                    ));
+                                });
+                            });
+
+                        panel
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::Center,
+                                    row_gap: Val::Px(10.0),
+                                    ..default()
+                                },
+                                NameEntryPanel,
+                                ProfileUiVisibility::NameEntryPanel,
+                                Visibility::Hidden,
+                            ))
+                            .with_children(|entry| {
+                                entry.spawn((
+                                    Text::new("Enter your name"),
+                                    TextFont {
+                                        font_size: 30.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_primary),
+                                ));
+                                entry.spawn((
+                                    Text::new("_"),
+                                    TextFont {
+                                        font_size: 28.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_primary),
+                                    ProfileMenuText::NameField,
+                                ));
+                                entry.spawn((
+                                    Text::new(""),
+                                    TextFont {
+                                        font_size: 16.0,
+                                        font: comic_bold.clone(),
+                                        ..default()
+                                    },
+                                    TextColor(ui_theme.text_secondary),
+                                    ProfileMenuText::NameError,
+                                ));
+                                entry.spawn((
+                                    Button,
+                                    Node {
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(48.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        border_radius: BorderRadius::all(Val::Px(14.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(ui_theme.button_fill),
+                                    ProfileMenuButtonAction::ConfirmName,
+                                ))
+                                .with_children(|button| {
+                                    button.spawn((
+                                        Text::new("Confirm"),
+                                        TextFont {
+                                            font_size: 20.0,
+                                            font: comic_bold.clone(),
+                                            ..default()
+                                        },
+                                        TextColor(ui_theme.button_text),
+                                    ));
+                                });
+                                entry.spawn((
+                                    Button,
+                                    Node {
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(42.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        border_radius: BorderRadius::all(Val::Px(14.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(ui_theme.button_fill),
+                                    ProfileMenuButtonAction::CancelName,
+                                ))
+                                .with_children(|button| {
+                                    button.spawn((
+                                        Text::new("Cancel"),
+                                        TextFont {
+                                            font_size: 18.0,
+                                            font: comic_bold.clone(),
+                                            ..default()
+                                        },
+                                        TextColor(ui_theme.button_text),
+                                    ));
+                                });
+                            });
+                    });
+            });
 
         parent
             .spawn((
@@ -929,13 +1652,13 @@ fn setup(
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(12.0),
-            left: Val::Px(12.0),
+            top: Val::Px(16.0),
+            left: Val::Px(16.0),
             width: Val::Px(280.0),
             height: Val::Px(62.0),
             justify_content: JustifyContent::FlexStart,
             align_items: AlignItems::Center,
-            padding: UiRect::left(Val::Px(14.0)),
+            padding: UiRect::horizontal(Val::Px(14.0)),
             border_radius: BorderRadius::all(Val::Px(14.0)),
             ..default()
         },
@@ -1142,38 +1865,26 @@ fn enter_menu(
     mut clear_color: ResMut<ClearColor>,
     mut gameplay_query: Query<
         &mut Visibility,
-        (With<GameplayEntity>, Without<MenuUi>, Without<GameOverUi>),
-    >,
-    mut menu_query: Query<
-        &mut Visibility,
-        (With<MenuUi>, Without<GameplayEntity>, Without<GameOverUi>),
+        (With<GameplayEntity>, Without<MenuUi>, Without<GameOverUi>, Without<DepthHud>),
     >,
     mut game_over_query: Query<
-        &mut Visibility,
-        (With<GameOverUi>, Without<GameplayEntity>, Without<MenuUi>),
+        (&mut Visibility, &mut Node),
+        (With<GameOverUi>, Without<DepthHud>),
     >,
-    mut how_to_modal_query: Query<
-        &mut Visibility,
-        (
-            With<HowToModal>,
-            Without<GameplayEntity>,
-            Without<MenuUi>,
-            Without<GameOverUi>,
-        ),
+    mut depth_hud_query: Query<
+        (&mut Visibility, &mut Node),
+        (With<DepthHud>, Without<GameOverUi>),
     >,
 ) {
     clear_color.0 = atmosphere_clear_color(0.0);
     for mut visibility in &mut gameplay_query {
         *visibility = Visibility::Hidden;
     }
-    if let Ok(mut menu_visibility) = menu_query.single_mut() {
-        *menu_visibility = Visibility::Visible;
+    if let Ok((mut visibility, mut node)) = game_over_query.single_mut() {
+        set_ui_shown(&mut visibility, &mut node, false);
     }
-    if let Ok(mut game_over_visibility) = game_over_query.single_mut() {
-        *game_over_visibility = Visibility::Hidden;
-    }
-    if let Ok(mut modal_visibility) = how_to_modal_query.single_mut() {
-        *modal_visibility = Visibility::Hidden;
+    if let Ok((mut visibility, mut node)) = depth_hud_query.single_mut() {
+        set_ui_shown(&mut visibility, &mut node, false);
     }
 }
 
@@ -1188,15 +1899,15 @@ fn enter_playing(
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut gameplay_query: Query<
         &mut Visibility,
-        (With<GameplayEntity>, Without<MenuUi>, Without<GameOverUi>),
-    >,
-    mut menu_query: Query<
-        &mut Visibility,
-        (With<MenuUi>, Without<GameplayEntity>, Without<GameOverUi>),
+        (With<GameplayEntity>, Without<MenuUi>, Without<GameOverUi>, Without<DepthHud>),
     >,
     mut game_over_query: Query<
-        &mut Visibility,
-        (With<GameOverUi>, Without<GameplayEntity>, Without<MenuUi>),
+        (&mut Visibility, &mut Node),
+        (With<GameOverUi>, Without<DepthHud>),
+    >,
+    mut depth_hud_query: Query<
+        (&mut Visibility, &mut Node),
+        (With<DepthHud>, Without<GameOverUi>),
     >,
     mut world_root_query: Query<(Entity, &mut Transform), (With<WorldRoot>, Without<RisingCircle>)>,
     mut bubble_query: Query<
@@ -1205,7 +1916,7 @@ fn enter_playing(
     >,
     segment_query: Query<Entity, With<CaveSegment>>,
     particle_query: Query<Entity, With<PopParticle>>,
-    mut depth_hud_query: Query<&mut Text, With<DepthHud>>,
+    mut depth_hud_text_query: Query<&mut Text, With<DepthHud>>,
 ) {
     let Ok((world_root_entity, mut world_transform)) = world_root_query.single_mut() else {
         return;
@@ -1231,7 +1942,7 @@ fn enter_playing(
         transform.scale = Vec3::ONE;
         velocity.0 = 0.0;
     }
-    if let Ok(mut depth_hud_text) = depth_hud_query.single_mut() {
+    if let Ok(mut depth_hud_text) = depth_hud_text_query.single_mut() {
         *depth_hud_text = Text::new("Depth: 0m");
     }
 
@@ -1244,11 +1955,11 @@ fn enter_playing(
     for mut visibility in &mut gameplay_query {
         *visibility = Visibility::Visible;
     }
-    if let Ok(mut menu_visibility) = menu_query.single_mut() {
-        *menu_visibility = Visibility::Hidden;
+    if let Ok((mut visibility, mut node)) = depth_hud_query.single_mut() {
+        set_ui_shown(&mut visibility, &mut node, true);
     }
-    if let Ok(mut game_over_visibility) = game_over_query.single_mut() {
-        *game_over_visibility = Visibility::Hidden;
+    if let Ok((mut visibility, mut node)) = game_over_query.single_mut() {
+        set_ui_shown(&mut visibility, &mut node, false);
     }
 }
 
@@ -1258,15 +1969,21 @@ fn enter_game_over(
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut screen_shake: ResMut<ScreenShake>,
     world_root: Res<WorldRootEntity>,
-    mut game_over_query: Query<&mut Visibility, (With<GameOverUi>, Without<DepthHud>)>,
-    mut depth_hud_query: Query<&mut Visibility, (With<DepthHud>, Without<GameOverUi>)>,
+    mut game_over_query: Query<
+        (&mut Visibility, &mut Node),
+        (With<GameOverUi>, Without<DepthHud>),
+    >,
+    mut depth_hud_query: Query<
+        (&mut Visibility, &mut Node),
+        (With<DepthHud>, Without<GameOverUi>),
+    >,
     bubble_query: Query<&Transform, With<RisingCircle>>,
 ) {
-    if let Ok(mut game_over_visibility) = game_over_query.single_mut() {
-        *game_over_visibility = Visibility::Visible;
+    if let Ok((mut game_over_visibility, mut node)) = game_over_query.single_mut() {
+        set_ui_shown(&mut game_over_visibility, &mut node, true);
     }
-    if let Ok(mut depth_hud_visibility) = depth_hud_query.single_mut() {
-        *depth_hud_visibility = Visibility::Hidden;
+    if let Ok((mut depth_hud_visibility, mut node)) = depth_hud_query.single_mut() {
+        set_ui_shown(&mut depth_hud_visibility, &mut node, false);
     }
 
     screen_shake.trauma = 1.0;
@@ -1310,7 +2027,8 @@ fn enter_game_over(
 
 fn record_game_over_run(
     depth_state: Res<DepthState>,
-    mut run_records: ResMut<RunRecords>,
+    active: Res<ActivePlayer>,
+    mut database: ResMut<PlayerDatabase>,
     mut depth_text_query: Query<&mut Text, With<GameOverText>>,
     mut best_text_query: Query<&mut Text, (With<GameOverBestText>, Without<GameOverText>)>,
     mut history_text_query: Query<
@@ -1321,52 +2039,406 @@ fn record_game_over_run(
             Without<GameOverBestText>,
         ),
     >,
-    mut new_best_query: Query<
-        &mut Visibility,
+    mut player_line_query: Query<
+        &mut Text,
         (
-            With<GameOverNewBest>,
+            With<GameOverPlayerLine>,
             Without<GameOverText>,
             Without<GameOverBestText>,
             Without<GameOverRunHistory>,
         ),
     >,
+    mut banner_query: Query<(&GameOverBanner, &mut Visibility)>,
 ) {
-    if let Ok(mut new_best_visibility) = new_best_query.single_mut() {
-        *new_best_visibility = Visibility::Hidden;
+    for (_, mut visibility) in &mut banner_query {
+        *visibility = Visibility::Hidden;
     }
 
     let depth_m = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
-    let new_best = run_records.record_run(depth_m).unwrap_or(false);
+    let Some(player_name) = active.0.clone() else {
+        return;
+    };
+
+    let result = database
+        .record_run(&player_name, depth_m)
+        .unwrap_or(RecordRunResult {
+            new_personal_best: false,
+            new_house_record: false,
+            rank: 0,
+        });
 
     if let Ok(mut depth_text) = depth_text_query.single_mut() {
         *depth_text = Text::new(format!("Depth: {depth_m}m"));
     }
-    if let Ok(mut best_text) = best_text_query.single_mut() {
-        *best_text = Text::new(format!("Best: {}m", run_records.best_depth_m));
+    if let Some(profile) = database.profile(&player_name) {
+        if let Ok(mut best_text) = best_text_query.single_mut() {
+            *best_text = Text::new(format!("Best: {}m", profile.best_depth_m));
+        }
+        if let Ok(mut history_text) = history_text_query.single_mut() {
+            *history_text = Text::new(format_run_history(&profile.recent_depths));
+        }
     }
-    if let Ok(mut history_text) = history_text_query.single_mut() {
-        *history_text = Text::new(format_run_history(&run_records.recent_depths));
+    if let Ok(mut player_line) = player_line_query.single_mut() {
+        let rank = result.rank;
+        *player_line = Text::new(format!("{player_name} · Rank #{rank}"));
     }
-    if let Ok(mut new_best_visibility) = new_best_query.single_mut() {
-        *new_best_visibility = if new_best {
-            Visibility::Visible
-        } else {
-            Visibility::Hidden
+    if result.new_personal_best {
+        for (banner, mut visibility) in &mut banner_query {
+            if *banner == GameOverBanner::NewBest {
+                *visibility = Visibility::Visible;
+            }
+        }
+    }
+    if result.new_house_record {
+        for (banner, mut visibility) in &mut banner_query {
+            if *banner == GameOverBanner::HouseRecord {
+                *visibility = Visibility::Visible;
+            }
+        }
+    }
+}
+
+fn reset_new_best_banner(mut banner_query: Query<(&GameOverBanner, &mut Visibility)>) {
+    for (_, mut visibility) in &mut banner_query {
+        *visibility = Visibility::Hidden;
+    }
+}
+
+fn set_ui_shown(visibility: &mut Visibility, node: &mut Node, shown: bool) {
+    if shown {
+        *visibility = Visibility::Inherited;
+        node.display = Display::Flex;
+    } else {
+        *visibility = Visibility::Hidden;
+        node.display = Display::None;
+    }
+}
+
+fn apply_menu_profile_visibility(
+    menu_state: &MenuScreenState,
+    database: &PlayerDatabase,
+    visibility_query: &mut Query<
+        (&ProfileUiVisibility, &mut Visibility, &mut Node),
+        Without<MenuUi>,
+    >,
+) {
+    let overlay_visible = menu_state.screen != MenuScreen::Main;
+    let rows: Vec<_> = database.leaderboard().into_iter().take(MAX_PROFILES).collect();
+    for (target, mut visibility, mut node) in visibility_query.iter_mut() {
+        let shown = match target {
+            ProfileUiVisibility::Overlay => overlay_visible,
+            ProfileUiVisibility::WelcomePanel => menu_state.screen == MenuScreen::Welcome,
+            ProfileUiVisibility::SwitchPanel => menu_state.screen == MenuScreen::SwitchPlayer,
+            ProfileUiVisibility::NameEntryPanel => menu_state.screen == MenuScreen::EnterName,
+            ProfileUiVisibility::MainPanel => menu_state.screen == MenuScreen::Main,
+            ProfileUiVisibility::PickButton(slot) => {
+                menu_state.screen == MenuScreen::SwitchPlayer && *slot < rows.len()
+            }
+        };
+        set_ui_shown(&mut visibility, &mut node, shown);
+    }
+}
+
+fn hide_all_menu_ui(
+    mut menu_query: Query<
+        (&mut Visibility, &mut Node),
+        (With<MenuUi>, Without<ProfileUiVisibility>, Without<HowToModal>),
+    >,
+    mut profile_query: Query<
+        (&ProfileUiVisibility, &mut Visibility, &mut Node),
+        (Without<MenuUi>, Without<HowToModal>),
+    >,
+    mut how_to_query: Query<
+        (&mut Visibility, &mut Node),
+        (With<HowToModal>, Without<MenuUi>, Without<ProfileUiVisibility>),
+    >,
+) {
+    if let Ok((mut visibility, mut node)) = menu_query.single_mut() {
+        set_ui_shown(&mut visibility, &mut node, false);
+    }
+    for (_, mut visibility, mut node) in &mut profile_query {
+        set_ui_shown(&mut visibility, &mut node, false);
+    }
+    if let Ok((mut visibility, mut node)) = how_to_query.single_mut() {
+        set_ui_shown(&mut visibility, &mut node, false);
+    }
+}
+
+fn sync_menu_profile_visibility(
+    menu_state: Res<MenuScreenState>,
+    database: Res<PlayerDatabase>,
+    mut menu_query: Query<
+        (&mut Visibility, &mut Node),
+        (With<MenuUi>, Without<ProfileUiVisibility>),
+    >,
+    mut profile_query: Query<
+        (&ProfileUiVisibility, &mut Visibility, &mut Node),
+        Without<MenuUi>,
+    >,
+) {
+    if let Ok((mut visibility, mut node)) = menu_query.single_mut() {
+        set_ui_shown(&mut visibility, &mut node, true);
+    }
+    apply_menu_profile_visibility(&menu_state, &database, &mut profile_query);
+}
+
+fn open_menu_screen(
+    mut menu_state: ResMut<MenuScreenState>,
+    mut active: ResMut<ActivePlayer>,
+    database: Res<PlayerDatabase>,
+) {
+    menu_state.name_buffer.clear();
+    menu_state.name_error = None;
+
+    if database.profiles.is_empty() {
+        active.0 = None;
+        menu_state.screen = MenuScreen::EnterName;
+    } else if let Some(last) = database.last_player.clone() {
+        active.0 = Some(last);
+        menu_state.screen = MenuScreen::Welcome;
+    } else {
+        active.0 = None;
+        menu_state.screen = MenuScreen::SwitchPlayer;
+    }
+}
+
+fn refresh_profile_menu_ui(
+    menu_state: Res<MenuScreenState>,
+    active: Res<ActivePlayer>,
+    database: Res<PlayerDatabase>,
+    mut profile_query: Query<
+        (&ProfileUiVisibility, &mut Visibility, &mut Node),
+        Without<MenuUi>,
+    >,
+    mut text_query: Query<(&ProfileMenuText, &mut Text)>,
+) {
+    apply_menu_profile_visibility(&menu_state, &database, &mut profile_query);
+
+    let rows: Vec<_> = database.leaderboard().into_iter().take(MAX_PROFILES).collect();
+    let highlight = active.0.as_deref();
+    let leaderboard = format_leaderboard_lines(&database, highlight);
+    for (slot, mut text) in &mut text_query {
+        *text = match slot {
+            ProfileMenuText::WelcomeTitle => {
+                if let Some(name) = &active.0 {
+                    Text::new(format!("Welcome back, {name}!"))
+                } else {
+                    Text::new("Welcome back!")
+                }
+            }
+            ProfileMenuText::WelcomeLeaderboard | ProfileMenuText::SwitchLeaderboard => {
+                Text::new(format!("Leaderboard:\n{leaderboard}"))
+            }
+            ProfileMenuText::PlayingAs => Text::new(format!(
+                "Playing as {}",
+                active.0.as_deref().unwrap_or("—")
+            )),
+            ProfileMenuText::NameField => {
+                let cursor = if menu_state.screen == MenuScreen::EnterName {
+                    "_"
+                } else {
+                    ""
+                };
+                Text::new(format!("{}{cursor}", menu_state.name_buffer))
+            }
+            ProfileMenuText::NameError => {
+                Text::new(menu_state.name_error.clone().unwrap_or_default())
+            }
+            ProfileMenuText::PickLabel(slot) => {
+                if *slot < rows.len() {
+                    let profile = rows[*slot];
+                    Text::new(format!(
+                        "#{} {} — {}m",
+                        slot + 1,
+                        profile.name,
+                        profile.best_depth_m
+                    ))
+                } else {
+                    Text::new("—")
+                }
+            }
         };
     }
 }
 
-fn reset_new_best_banner(mut new_best_query: Query<&mut Visibility, With<GameOverNewBest>>) {
-    for mut visibility in &mut new_best_query {
-        *visibility = Visibility::Hidden;
+fn select_profile(
+    name: &str,
+    database: &mut PlayerDatabase,
+    active: &mut ActivePlayer,
+    menu_state: &mut MenuScreenState,
+) {
+    if database.select_player(name) {
+        active.0 = Some(name.to_string());
+        menu_state.screen = MenuScreen::Main;
+        menu_state.name_error = None;
+    }
+}
+
+fn confirm_new_profile(
+    database: &mut PlayerDatabase,
+    active: &mut ActivePlayer,
+    menu_state: &mut MenuScreenState,
+) -> bool {
+    match database.add_player(&menu_state.name_buffer) {
+        Ok(name) => {
+            active.0 = Some(name);
+            menu_state.name_buffer.clear();
+            menu_state.name_error = None;
+            menu_state.screen = MenuScreen::Main;
+            true
+        }
+        Err(error) => {
+            menu_state.name_error = Some(error.message().to_string());
+            false
+        }
+    }
+}
+
+fn profile_menu_button_input(
+    mut database: ResMut<PlayerDatabase>,
+    mut active: ResMut<ActivePlayer>,
+    mut menu_state: ResMut<MenuScreenState>,
+    mut fade: ResMut<FadeTransition>,
+    ui_theme: Res<UiTheme>,
+    mut query: Query<
+        (&Interaction, &mut BackgroundColor, &ProfileMenuButtonAction),
+        (Changed<Interaction>, With<Button>),
+    >,
+) {
+    let rows: Vec<String> = database
+        .leaderboard()
+        .into_iter()
+        .take(MAX_PROFILES)
+        .map(|profile| profile.name.clone())
+        .collect();
+
+    for (interaction, mut color, action) in &mut query {
+        match *interaction {
+            Interaction::Pressed => match action {
+                ProfileMenuButtonAction::Play if active.0.is_some() => {
+                    *color = BackgroundColor(ui_theme.button_pressed);
+                    request_game_state_change(fade.as_mut(), GameState::Playing);
+                }
+                ProfileMenuButtonAction::SwitchPlayer => {
+                    *color = BackgroundColor(ui_theme.button_pressed);
+                    menu_state.screen = MenuScreen::SwitchPlayer;
+                }
+                ProfileMenuButtonAction::AddPlayer => {
+                    *color = BackgroundColor(ui_theme.button_pressed);
+                    menu_state.name_buffer.clear();
+                    menu_state.name_error = None;
+                    menu_state.screen = MenuScreen::EnterName;
+                }
+                ProfileMenuButtonAction::BackFromSwitch => {
+                    *color = BackgroundColor(ui_theme.button_pressed);
+                    menu_state.name_error = None;
+                    menu_state.screen = if active.0.is_some() {
+                        MenuScreen::Welcome
+                    } else if database.profiles.is_empty() {
+                        MenuScreen::EnterName
+                    } else {
+                        MenuScreen::Main
+                    };
+                }
+                ProfileMenuButtonAction::ConfirmName => {
+                    *color = BackgroundColor(ui_theme.button_pressed);
+                    confirm_new_profile(database.as_mut(), active.as_mut(), menu_state.as_mut());
+                }
+                ProfileMenuButtonAction::CancelName => {
+                    *color = BackgroundColor(ui_theme.button_pressed);
+                    menu_state.name_buffer.clear();
+                    menu_state.name_error = None;
+                    menu_state.screen = if database.profiles.is_empty() {
+                        MenuScreen::EnterName
+                    } else if active.0.is_some() {
+                        MenuScreen::Welcome
+                    } else {
+                        MenuScreen::SwitchPlayer
+                    };
+                }
+                ProfileMenuButtonAction::PickProfile(slot) if *slot < rows.len() => {
+                    *color = BackgroundColor(ui_theme.button_pressed);
+                    select_profile(
+                        &rows[*slot],
+                        database.as_mut(),
+                        active.as_mut(),
+                        menu_state.as_mut(),
+                    );
+                }
+                _ => {}
+            },
+            Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
+            Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
+        }
+    }
+}
+
+fn profile_name_keyboard_input(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut keyboard_events: MessageReader<bevy::input::keyboard::KeyboardInput>,
+    mut database: ResMut<PlayerDatabase>,
+    mut active: ResMut<ActivePlayer>,
+    mut menu_state: ResMut<MenuScreenState>,
+) {
+    if menu_state.screen != MenuScreen::EnterName {
+        return;
+    }
+
+    if keyboard.just_pressed(KeyCode::Enter) {
+        confirm_new_profile(database.as_mut(), active.as_mut(), menu_state.as_mut());
+        return;
+    }
+
+    if keyboard.just_pressed(KeyCode::Escape) {
+        menu_state.name_buffer.clear();
+        menu_state.name_error = None;
+        menu_state.screen = if database.profiles.is_empty() {
+            MenuScreen::EnterName
+        } else if active.0.is_some() {
+            MenuScreen::Welcome
+        } else {
+            MenuScreen::SwitchPlayer
+        };
+        return;
+    }
+
+    if keyboard.just_pressed(KeyCode::Backspace) {
+        menu_state.name_buffer.pop();
+        menu_state.name_error = None;
+    }
+
+    for event in keyboard_events.read() {
+        if event.state != bevy::input::ButtonState::Pressed || event.repeat {
+            continue;
+        }
+        let Some(text) = event.text.as_ref() else {
+            continue;
+        };
+        for ch in text.chars() {
+            if menu_state.name_buffer.len() >= MAX_NAME_LEN {
+                menu_state.name_error = Some(ProfileError::NameTooLong.message().to_string());
+                break;
+            }
+            if ch.is_ascii_alphanumeric() || ch == ' ' || ch == '-' || ch == '_' {
+                menu_state.name_buffer.push(ch);
+                menu_state.name_error = None;
+            } else if !ch.is_control() {
+                menu_state.name_error = Some(ProfileError::InvalidCharacter.message().to_string());
+            }
+        }
     }
 }
 
 fn menu_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut fade: ResMut<FadeTransition>,
+    menu_state: Res<MenuScreenState>,
+    active: Res<ActivePlayer>,
 ) {
-    if keyboard.just_pressed(KeyCode::Space) {
+    if menu_state.screen != MenuScreen::Main {
+        return;
+    }
+    if active.0.is_some() && keyboard.just_pressed(KeyCode::Space) {
         request_game_state_change(fade.as_mut(), GameState::Playing);
     }
 }
@@ -1377,16 +2449,22 @@ fn menu_button_input(
         (Changed<Interaction>, With<Button>, With<MenuStartButton>),
     >,
     mut fade: ResMut<FadeTransition>,
+    menu_state: Res<MenuScreenState>,
+    active: Res<ActivePlayer>,
     ui_theme: Res<UiTheme>,
 ) {
+    if menu_state.screen != MenuScreen::Main {
+        return;
+    }
     for (interaction, mut color) in &mut query {
         match *interaction {
-            Interaction::Pressed => {
+            Interaction::Pressed if active.0.is_some() => {
                 *color = BackgroundColor(ui_theme.button_pressed);
                 request_game_state_change(fade.as_mut(), GameState::Playing);
             }
             Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
             Interaction::None => *color = BackgroundColor(ui_theme.button_fill),
+            _ => {}
         }
     }
 }
@@ -1396,15 +2474,15 @@ fn menu_how_to_button_input(
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>, With<MenuHowToButton>),
     >,
-    mut modal_query: Query<&mut Visibility, With<HowToModal>>,
+    mut modal_query: Query<(&mut Visibility, &mut Node), With<HowToModal>>,
     ui_theme: Res<UiTheme>,
 ) {
     for (interaction, mut color) in &mut query {
         match *interaction {
             Interaction::Pressed => {
                 *color = BackgroundColor(ui_theme.button_pressed);
-                if let Ok(mut modal_visibility) = modal_query.single_mut() {
-                    *modal_visibility = Visibility::Visible;
+                if let Ok((mut modal_visibility, mut node)) = modal_query.single_mut() {
+                    set_ui_shown(&mut modal_visibility, &mut node, true);
                 }
             }
             Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
@@ -1418,15 +2496,15 @@ fn menu_close_how_to_button_input(
         (&Interaction, &mut BackgroundColor),
         (Changed<Interaction>, With<Button>, With<CloseHowToButton>),
     >,
-    mut modal_query: Query<&mut Visibility, With<HowToModal>>,
+    mut modal_query: Query<(&mut Visibility, &mut Node), With<HowToModal>>,
     ui_theme: Res<UiTheme>,
 ) {
     for (interaction, mut color) in &mut query {
         match *interaction {
             Interaction::Pressed => {
                 *color = BackgroundColor(ui_theme.button_pressed);
-                if let Ok(mut modal_visibility) = modal_query.single_mut() {
-                    *modal_visibility = Visibility::Hidden;
+                if let Ok((mut modal_visibility, mut node)) = modal_query.single_mut() {
+                    set_ui_shown(&mut modal_visibility, &mut node, false);
                 }
             }
             Interaction::Hovered => *color = BackgroundColor(ui_theme.button_hover),
