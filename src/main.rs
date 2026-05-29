@@ -15,6 +15,8 @@ const CENTERED_START_SEGMENTS: u32 = 4;
 const PIXELS_PER_METER: f32 = 100.0;
 const HORIZONTAL_ACCELERATION: f32 = 900.0;
 const HORIZONTAL_MAX_SPEED: f32 = 420.0;
+const TOOTH_DEPTH: f32 = 35.0;
+const TOOTH_HEIGHT: f32 = SEGMENT_HEIGHT * 0.5;
 
 #[derive(States, Debug, Clone, Eq, PartialEq, Hash, Default)]
 enum GameState {
@@ -252,6 +254,7 @@ fn spawn_cave_segment(
     materials: &mut Assets<ColorMaterial>,
     y: f32,
     gap_center_x: f32,
+    teeth_in_upper_half: bool,
 ) {
     let half_screen = SCREEN_WIDTH * 0.5;
     let left_gap_edge = gap_center_x - GAP_WIDTH * 0.5;
@@ -282,6 +285,33 @@ fn spawn_cave_segment(
                 MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
                 Transform::from_xyz(right_wall_x, 0.0, 0.0),
             ));
+
+            let tooth_offsets = if teeth_in_upper_half {
+                [6.0, 30.0]
+            } else {
+                [-6.0, -30.0]
+            };
+
+            for offset_y in tooth_offsets {
+                parent.spawn((
+                    Mesh2d(meshes.add(Triangle2d::new(
+                        Vec2::new(0.0, -TOOTH_HEIGHT * 0.5),
+                        Vec2::new(0.0, TOOTH_HEIGHT * 0.5),
+                        Vec2::new(TOOTH_DEPTH, 0.0),
+                    ))),
+                    MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
+                    Transform::from_xyz(left_gap_edge, offset_y, 0.0),
+                ));
+                parent.spawn((
+                    Mesh2d(meshes.add(Triangle2d::new(
+                        Vec2::new(0.0, -TOOTH_HEIGHT * 0.5),
+                        Vec2::new(0.0, TOOTH_HEIGHT * 0.5),
+                        Vec2::new(-TOOTH_DEPTH, 0.0),
+                    ))),
+                    MeshMaterial2d(materials.add(Color::srgb(0.08, 0.18, 0.22))),
+                    Transform::from_xyz(right_gap_edge, offset_y, 0.0),
+                ));
+            }
         });
 }
 
@@ -299,20 +329,28 @@ fn reset_and_spawn_cave(
 
     for i in 0..segment_count {
         let y = first_segment_y + i as f32 * SEGMENT_HEIGHT;
-        let gap_center_x = next_segment_gap_center(cave_generation);
-        spawn_cave_segment(commands, meshes, materials, y, gap_center_x);
+        let (gap_center_x, spawn_index) = next_segment_gap_center(cave_generation);
+        spawn_cave_segment(
+            commands,
+            meshes,
+            materials,
+            y,
+            gap_center_x,
+            spawn_index % 2 == 0,
+        );
     }
 }
 
-fn next_segment_gap_center(cave_generation: &mut CaveGeneration) -> f32 {
-    let gap_center_x = if cave_generation.spawned_segment_count < CENTERED_START_SEGMENTS {
+fn next_segment_gap_center(cave_generation: &mut CaveGeneration) -> (f32, u32) {
+    let spawn_index = cave_generation.spawned_segment_count;
+    let gap_center_x = if spawn_index < CENTERED_START_SEGMENTS {
         0.0
     } else {
         next_gap_center(cave_generation.last_gap_center_x)
     };
     cave_generation.last_gap_center_x = gap_center_x;
     cave_generation.spawned_segment_count += 1;
-    gap_center_x
+    (gap_center_x, spawn_index)
 }
 
 fn next_gap_center(previous_gap_center_x: f32) -> f32 {
@@ -483,13 +521,14 @@ fn scroll_cave_segments(
         if below_screen {
             commands.entity(entity).despawn();
             let spawn_y = top_y + SEGMENT_HEIGHT;
-            let next_gap_center_x = next_segment_gap_center(cave_generation.as_mut());
+            let (next_gap_center_x, spawn_index) = next_segment_gap_center(cave_generation.as_mut());
             spawn_cave_segment(
                 &mut commands,
                 &mut meshes,
                 &mut materials,
                 spawn_y,
                 next_gap_center_x,
+                spawn_index % 2 == 0,
             );
             top_y = spawn_y;
         } else {
