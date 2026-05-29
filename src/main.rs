@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::render::view::Hdr;
 use bevy::transform::TransformSystems;
+use std::fs;
+use std::io;
 
 const SCREEN_WIDTH: f32 = 900.0;
 const SCREEN_HEIGHT: f32 = 600.0;
@@ -29,6 +31,8 @@ const MENU_BUBBLE_COUNT: u32 = 20;
 const FADE_DURATION: f32 = 0.18;
 const DEPTH_COLOR_RAMP_METERS: f32 = 100.0;
 const METERS_PER_SEGMENT: f32 = SEGMENT_HEIGHT / PIXELS_PER_METER;
+const MAX_RECENT_RUNS: usize = 5;
+const SCORES_FILE: &str = "pressurized_scores.txt";
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
@@ -69,6 +73,87 @@ struct GameOverUi;
 
 #[derive(Component)]
 struct GameOverText;
+
+#[derive(Component)]
+struct GameOverNewBest;
+
+#[derive(Component)]
+struct GameOverBestText;
+
+#[derive(Component)]
+struct GameOverRunHistory;
+
+#[derive(Resource, Default)]
+struct RunRecords {
+    best_depth_m: i32,
+    recent_depths: Vec<i32>,
+}
+
+impl RunRecords {
+    fn load() -> Self {
+        let Ok(content) = fs::read_to_string(SCORES_FILE) else {
+            return Self::default();
+        };
+
+        let mut lines = content.lines();
+        let best_depth_m = lines
+            .next()
+            .and_then(|line| line.strip_prefix("best="))
+            .and_then(|value| value.trim().parse().ok())
+            .unwrap_or(0);
+        let recent_depths = lines
+            .next()
+            .map(|line| {
+                line.split(',')
+                    .filter_map(|value| value.trim().parse().ok())
+                    .take(MAX_RECENT_RUNS)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Self {
+            best_depth_m,
+            recent_depths,
+        }
+    }
+
+    fn save(&self) -> io::Result<()> {
+        let recent = self
+            .recent_depths
+            .iter()
+            .map(|depth| depth.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let content = format!("best={}\n{}", self.best_depth_m, recent);
+        fs::write(SCORES_FILE, content)?;
+        Ok(())
+    }
+
+    fn record_run(&mut self, depth_m: i32) -> io::Result<bool> {
+        let new_best = depth_m > self.best_depth_m;
+        if new_best {
+            self.best_depth_m = depth_m;
+        }
+
+        self.recent_depths.insert(0, depth_m);
+        self.recent_depths.truncate(MAX_RECENT_RUNS);
+        self.save()?;
+        Ok(new_best)
+    }
+}
+
+fn format_run_history(recent_depths: &[i32]) -> String {
+    if recent_depths.is_empty() {
+        return "Recent runs: —".to_string();
+    }
+
+    let depths = recent_depths
+        .iter()
+        .map(|depth| format!("{depth}m"))
+        .collect::<Vec<_>>()
+        .join(" · ");
+    format!("Recent: {depths}")
+}
 
 #[derive(Component)]
 struct MenuStartButton;
@@ -248,11 +333,15 @@ fn main() {
         .init_resource::<RunState>()
         .init_resource::<ScreenShake>()
         .init_resource::<FadeTransition>()
+        .insert_resource(RunRecords::load())
         .init_resource::<UiTheme>()
         .add_systems(Startup, setup)
         .add_systems(OnEnter(GameState::Menu), enter_menu)
-        .add_systems(OnEnter(GameState::Playing), enter_playing)
-        .add_systems(OnEnter(GameState::GameOver), enter_game_over)
+        .add_systems(OnEnter(GameState::Playing), (enter_playing, reset_new_best_banner))
+        .add_systems(
+            OnEnter(GameState::GameOver),
+            (record_game_over_run, enter_game_over).chain(),
+        )
         .add_systems(
             Update,
             (
@@ -376,7 +465,7 @@ fn setup(
             .spawn((
                 Node {
                     width: Val::Px(520.0),
-                    height: Val::Px(360.0),
+                    height: Val::Px(430.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
@@ -389,7 +478,7 @@ fn setup(
                     left: Val::Px(2.0),
                     top: Val::Px(2.0),
                         width: Val::Px(520.0),
-                        height: Val::Px(360.0),
+                        height: Val::Px(430.0),
                         border_radius: BorderRadius::all(Val::Px(18.0)),
                         ..default()
                     },
@@ -398,11 +487,11 @@ fn setup(
                 panel.spawn((
                     Node {
                         width: Val::Px(520.0),
-                        height: Val::Px(360.0),
+                        height: Val::Px(430.0),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         flex_direction: FlexDirection::Column,
-                        row_gap: Val::Px(8.0),
+                        row_gap: Val::Px(6.0),
                         border_radius: BorderRadius::all(Val::Px(18.0)),
                         ..default()
                     },
@@ -429,6 +518,37 @@ fn setup(
                         GameOverText,
                     ));
                     card.spawn((
+                        Text::new("New Best!"),
+                        TextFont {
+                            font_size: 26.0,
+                            font: comic_bold_italic.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_primary),
+                        GameOverNewBest,
+                        Visibility::Hidden,
+                    ));
+                    card.spawn((
+                        Text::new("Best: 0m"),
+                        TextFont {
+                            font_size: 20.0,
+                            font: comic_bold.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_secondary),
+                        GameOverBestText,
+                    ));
+                    card.spawn((
+                        Text::new("Recent: —"),
+                        TextFont {
+                            font_size: 17.0,
+                            font: comic_bold.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_secondary),
+                        GameOverRunHistory,
+                    ));
+                    card.spawn((
                         Button,
                         Node {
                             width: Val::Px(240.0),
@@ -436,7 +556,7 @@ fn setup(
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             border_radius: BorderRadius::all(Val::Px(14.0)),
-                            margin: UiRect::top(Val::Px(6.0)),
+                            margin: UiRect::top(Val::Px(4.0)),
                             ..default()
                         },
                         BackgroundColor(ui_theme.button_fill),
@@ -1188,6 +1308,60 @@ fn enter_game_over(
     }
 }
 
+fn record_game_over_run(
+    depth_state: Res<DepthState>,
+    mut run_records: ResMut<RunRecords>,
+    mut depth_text_query: Query<&mut Text, With<GameOverText>>,
+    mut best_text_query: Query<&mut Text, (With<GameOverBestText>, Without<GameOverText>)>,
+    mut history_text_query: Query<
+        &mut Text,
+        (
+            With<GameOverRunHistory>,
+            Without<GameOverText>,
+            Without<GameOverBestText>,
+        ),
+    >,
+    mut new_best_query: Query<
+        &mut Visibility,
+        (
+            With<GameOverNewBest>,
+            Without<GameOverText>,
+            Without<GameOverBestText>,
+            Without<GameOverRunHistory>,
+        ),
+    >,
+) {
+    if let Ok(mut new_best_visibility) = new_best_query.single_mut() {
+        *new_best_visibility = Visibility::Hidden;
+    }
+
+    let depth_m = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
+    let new_best = run_records.record_run(depth_m).unwrap_or(false);
+
+    if let Ok(mut depth_text) = depth_text_query.single_mut() {
+        *depth_text = Text::new(format!("Depth: {depth_m}m"));
+    }
+    if let Ok(mut best_text) = best_text_query.single_mut() {
+        *best_text = Text::new(format!("Best: {}m", run_records.best_depth_m));
+    }
+    if let Ok(mut history_text) = history_text_query.single_mut() {
+        *history_text = Text::new(format_run_history(&run_records.recent_depths));
+    }
+    if let Ok(mut new_best_visibility) = new_best_query.single_mut() {
+        *new_best_visibility = if new_best {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
+    }
+}
+
+fn reset_new_best_banner(mut new_best_query: Query<&mut Visibility, With<GameOverNewBest>>) {
+    for mut visibility in &mut new_best_query {
+        *visibility = Visibility::Hidden;
+    }
+}
+
 fn menu_input(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut fade: ResMut<FadeTransition>,
@@ -1542,14 +1716,12 @@ fn scroll_cave_segments(
 fn detect_wall_collision(
     mut next_state: ResMut<NextState<GameState>>,
     mut screen_shake: ResMut<ScreenShake>,
-    depth_state: Res<DepthState>,
     bubble_query: Query<&Transform, (With<RisingCircle>, Without<WorldRoot>, Without<CaveSegment>)>,
     mut bubble_visibility_query: Query<&mut Visibility, With<RisingCircle>>,
     segment_query: Query<
         (&Transform, &CaveSegment),
         (Without<WorldRoot>, Without<RisingCircle>),
     >,
-    mut game_over_depth_query: Query<&mut Text, With<GameOverText>>,
     mut world_root_query: WorldRootTransformQuery,
     mut game_over_ui_query: Query<&mut Node, With<GameOverUi>>,
 ) {
@@ -1574,10 +1746,6 @@ fn detect_wall_collision(
         );
         if let Ok(mut bubble_visibility) = bubble_visibility_query.single_mut() {
             *bubble_visibility = Visibility::Hidden;
-        }
-        if let Ok(mut game_over_depth_text) = game_over_depth_query.single_mut() {
-            let depth_meters = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
-            *game_over_depth_text = Text::new(format!("Depth: {}m", depth_meters));
         }
         next_state.set(GameState::GameOver);
     }
