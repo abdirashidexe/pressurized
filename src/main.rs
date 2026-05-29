@@ -60,6 +60,31 @@ struct GameOverUi;
 #[derive(Component)]
 struct GameOverText;
 
+#[derive(Resource)]
+struct UiTheme {
+    menu_backdrop: Color,
+    panel_fill: Color,
+    panel_shadow: Color,
+    text_primary: Color,
+    text_secondary: Color,
+    text_shadow: Color,
+    hud_panel: Color,
+}
+
+impl Default for UiTheme {
+    fn default() -> Self {
+        Self {
+            menu_backdrop: Color::srgba(0.01, 0.01, 0.02, 0.9),
+            panel_fill: Color::srgba(0.04, 0.07, 0.16, 0.84),
+            panel_shadow: Color::srgba(0.0, 0.0, 0.0, 0.42),
+            text_primary: Color::linear_rgba(1.15, 1.15, 1.2, 1.0),
+            text_secondary: Color::linear_rgba(1.0, 1.05, 1.12, 1.0),
+            text_shadow: Color::srgba(0.0, 0.0, 0.02, 0.6),
+            hud_panel: Color::srgba(0.02, 0.05, 0.12, 0.62),
+        }
+    }
+}
+
 #[derive(Component)]
 struct MenuBubble {
     top_px: f32,
@@ -113,6 +138,7 @@ fn main() {
         .init_resource::<DepthState>()
         .init_resource::<RunState>()
         .init_resource::<ScreenShake>()
+        .init_resource::<UiTheme>()
         .add_systems(Startup, setup)
         .add_systems(OnEnter(GameState::Menu), enter_menu)
         .add_systems(OnEnter(GameState::Playing), enter_playing)
@@ -144,6 +170,7 @@ fn setup(
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut cave_generation: ResMut<CaveGeneration>,
     asset_server: Res<AssetServer>,
+    ui_theme: Res<UiTheme>,
 ) {
     let poppins_regular = asset_server.load("fonts/Poppins-Regular.ttf");
     let poppins_semibold = asset_server.load("fonts/Poppins-SemiBold.ttf");
@@ -198,41 +225,65 @@ fn setup(
                     height: Val::Px(220.0),
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.1, 0.88)),
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("You Popped!"),
-                    TextFont {
-                        font_size: 48.0,
-                        font: poppins_semibold.clone(),
+                    Node {
+                        position_type: PositionType::Absolute,
+                    left: Val::Px(2.0),
+                    top: Val::Px(2.0),
+                        width: Val::Px(520.0),
+                        height: Val::Px(220.0),
+                        border_radius: BorderRadius::all(Val::Px(18.0)),
                         ..default()
                     },
-                    TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
+                    BackgroundColor(ui_theme.panel_shadow),
                 ));
                 panel.spawn((
-                    Text::new("Depth: 0m"),
-                    TextFont {
-                        font_size: 48.0,
-                        font: poppins_regular.clone(),
+                    Node {
+                        width: Val::Px(520.0),
+                        height: Val::Px(220.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(10.0),
+                        border_radius: BorderRadius::all(Val::Px(18.0)),
                         ..default()
                     },
-                    TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
-                    GameOverText,
-                ));
-                panel.spawn((
-                    Text::new("Press R to restart"),
-                    TextFont {
-                        font_size: 48.0,
-                        font: poppins_regular.clone(),
-                        ..default()
-                    },
-                    TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
-                ));
+                    BackgroundColor(ui_theme.panel_fill),
+                ))
+                .with_children(|card| {
+                    card.spawn((
+                        Text::new("You Popped!"),
+                        TextFont {
+                            font_size: 48.0,
+                            font: poppins_semibold.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_primary),
+                    ));
+                    card.spawn((
+                        Text::new("Depth: 0m"),
+                        TextFont {
+                            font_size: 48.0,
+                            font: poppins_regular.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_primary),
+                        GameOverText,
+                    ));
+                    card.spawn((
+                        Text::new("Press R to restart"),
+                        TextFont {
+                            font_size: 48.0,
+                            font: poppins_regular.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_secondary),
+                    ));
+                });
             });
     });
     commands.spawn((
@@ -246,7 +297,7 @@ fn setup(
             row_gap: Val::Px(22.0),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.01, 0.01, 0.015, 1.0)),
+        BackgroundColor(ui_theme.menu_backdrop),
         MenuUi,
         Visibility::Visible,
     ))
@@ -276,43 +327,106 @@ fn setup(
             ));
         }
         parent.spawn((
-            Text::new("PRESSURIZED"),
-            TextFont {
-                font_size: 86.0,
-                font: poppins_semibold.clone(),
+            Node {
+                width: Val::Px(760.0),
+                height: Val::Px(290.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
                 ..default()
             },
-            TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
-        ));
-        parent.spawn((
-            Text::new("Press SPACE to begin"),
-            TextFont {
-                font_size: 34.0,
-                font: poppins_regular.clone(),
-                ..default()
-            },
-            TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
-        ));
+        ))
+        .with_children(|panel| {
+            panel.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(2.0),
+                    top: Val::Px(2.0),
+                    width: Val::Px(760.0),
+                    height: Val::Px(290.0),
+                    border_radius: BorderRadius::all(Val::Px(26.0)),
+                    ..default()
+                },
+                BackgroundColor(ui_theme.panel_shadow),
+            ));
+            panel
+                .spawn((
+                    Node {
+                        width: Val::Px(760.0),
+                        height: Val::Px(290.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        flex_direction: FlexDirection::Column,
+                        row_gap: Val::Px(20.0),
+                        border_radius: BorderRadius::all(Val::Px(26.0)),
+                        ..default()
+                    },
+                    BackgroundColor(ui_theme.panel_fill),
+                ))
+                .with_children(|card| {
+                    card.spawn((
+                        Text::new("PRESSURIZED"),
+                        TextFont {
+                            font_size: 86.0,
+                            font: poppins_semibold.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_primary),
+                    ));
+                    card.spawn((
+                        Text::new("Press SPACE to begin"),
+                        TextFont {
+                            font_size: 34.0,
+                            font: poppins_regular.clone(),
+                            ..default()
+                        },
+                        TextColor(ui_theme.text_secondary),
+                    ));
+                });
+        });
     });
     commands.spawn((
-        Text::new("Depth: 0m"),
-        TextFont {
-            font_size: 36.0,
-            font: poppins_regular.clone(),
-            ..default()
-        },
-        TextColor(Color::linear_rgba(1.15, 1.15, 1.2, 1.0)),
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Percent(5.0),
-            width: Val::Percent(100.0),
+            top: Val::Percent(3.4),
+            left: Val::Percent(50.0),
+            width: Val::Px(190.0),
+            height: Val::Px(54.0),
             justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::all(Val::Px(14.0)),
             ..default()
         },
+        BackgroundColor(ui_theme.hud_panel),
         DepthHud,
         GameplayEntity,
         Visibility::Visible,
-    ));
+    ))
+    .with_children(|hud| {
+        hud.spawn((
+            Text::new("Depth: 0m"),
+            TextFont {
+                font_size: 36.0,
+                font: poppins_regular.clone(),
+                ..default()
+            },
+            TextColor(ui_theme.text_shadow),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(1.0),
+                top: Val::Px(1.0),
+                ..default()
+            },
+        ));
+        hud.spawn((
+            Text::new("Depth: 0m"),
+            TextFont {
+                font_size: 36.0,
+                font: poppins_regular,
+                ..default()
+            },
+            TextColor(ui_theme.text_primary),
+        ));
+    });
 }
 
 fn spawn_cave_segment(
@@ -785,10 +899,14 @@ fn detect_wall_collision(
 
 fn update_depth_ui(
     depth_state: Res<DepthState>,
-    mut hud_query: Query<&mut Text, With<DepthHud>>,
+    mut hud_query: Query<&mut Text, Without<GameOverText>>,
 ) {
-    if let Ok(mut hud_text) = hud_query.single_mut() {
-        let depth_meters = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
-        *hud_text = Text::new(format!("Depth: {}m", depth_meters));
+    let depth_meters = (depth_state.pixels_scrolled / PIXELS_PER_METER).floor() as i32;
+    let depth_label = format!("Depth: {}m", depth_meters);
+
+    for mut text in &mut hud_query {
+        if text.as_str().starts_with("Depth:") {
+            *text = Text::new(depth_label.clone());
+        }
     }
 }
