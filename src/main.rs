@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy::post_process::bloom::Bloom;
+use bevy::post_process::bloom::{Bloom, BloomCompositeMode, BloomPrefilter};
 use bevy::render::view::Hdr;
 
 const SCREEN_WIDTH: f32 = 900.0;
@@ -26,6 +26,8 @@ const SCREEN_SHAKE_MAX_OFFSET: f32 = 18.0;
 const SCREEN_SHAKE_DURATION: f32 = 0.3;
 const MENU_BUBBLE_COUNT: u32 = 20;
 const FADE_DURATION: f32 = 0.18;
+const DEPTH_COLOR_RAMP_METERS: f32 = 100.0;
+const METERS_PER_SEGMENT: f32 = SEGMENT_HEIGHT / PIXELS_PER_METER;
 
 #[derive(States, Debug, Clone, Copy, Eq, PartialEq, Hash, Default)]
 enum GameState {
@@ -45,6 +47,9 @@ struct HorizontalVelocity(f32);
 struct CaveSegment {
     gap_center_x: f32,
 }
+
+#[derive(Component)]
+struct CaveWall;
 
 #[derive(Component)]
 struct GameplayEntity;
@@ -102,11 +107,11 @@ impl Default for UiTheme {
             menu_backdrop: Color::srgba(0.149, 0.294, 0.412, 0.88), // astronaut
             panel_fill: Color::srgba(0.239, 0.451, 0.522, 0.86),    // ming
             panel_shadow: Color::srgba(0.149, 0.294, 0.412, 0.48),  // astronaut
-            text_primary: Color::linear_rgba(0.631, 0.773, 0.808, 1.0), // casper
-            text_secondary: Color::linear_rgba(0.525, 0.729, 0.757, 1.0), // neptune
+            text_primary: Color::linear_rgba(1.15, 1.45, 1.55, 1.0), // casper — HDR for bloom
+            text_secondary: Color::linear_rgba(0.85, 1.2, 1.25, 1.0), // neptune
             hud_panel: Color::srgba(0.345, 0.557, 0.655, 0.62),     // horizon
-            button_fill: Color::srgb(0.631, 0.773, 0.808),          // casper
-            button_hover: Color::srgb(0.525, 0.729, 0.757),         // neptune
+            button_fill: Color::linear_rgba(1.0, 1.35, 1.45, 1.0),  // casper — HDR for bloom
+            button_hover: Color::linear_rgba(0.9, 1.25, 1.3, 1.0), // neptune
             button_pressed: Color::srgb(0.345, 0.557, 0.655),       // horizon
             button_text: Color::srgb(0.149, 0.294, 0.412),          // astronaut
         }
@@ -178,6 +183,40 @@ fn gameplay_allowed(state: Res<State<GameState>>, fade: Res<FadeTransition>) -> 
     *state.get() == GameState::Playing && fade.active.is_none()
 }
 
+fn screen_shake_active(shake: Res<ScreenShake>) -> bool {
+    shake.trauma > 0.0
+}
+
+fn depth_blend_t(depth_meters: f32) -> f32 {
+    (depth_meters / DEPTH_COLOR_RAMP_METERS).clamp(0.0, 1.0)
+}
+
+fn lerp_color(from: Color, to: Color, t: f32) -> Color {
+    from.mix(&to, t)
+}
+
+fn cave_wall_color_for_depth(depth_meters: f32) -> Color {
+    let t = depth_blend_t(depth_meters);
+    let shallow = Color::srgb(0.45, 0.72, 0.82);
+    let mid = Color::srgb(0.24, 0.14, 0.40);
+    let abyss = Color::srgb(0.06, 0.03, 0.10);
+    if t < 0.55 {
+        lerp_color(shallow, mid, t / 0.55)
+    } else {
+        lerp_color(mid, abyss, (t - 0.55) / 0.45)
+    }
+}
+
+fn atmosphere_clear_color(depth_meters: f32) -> Color {
+    let shallow = Color::srgb(0.149, 0.294, 0.412);
+    let deep = Color::srgb(0.03, 0.02, 0.07);
+    lerp_color(shallow, deep, depth_blend_t(depth_meters))
+}
+
+fn spawn_depth_meters(spawn_index: u32) -> f32 {
+    spawn_index as f32 * METERS_PER_SEGMENT
+}
+
 fn request_game_state_change(fade: &mut FadeTransition, target: GameState) {
     if fade.active.is_some() {
         return;
@@ -219,6 +258,7 @@ fn main() {
                 scroll_cave_segments,
                 detect_wall_collision,
                 update_depth_ui,
+                update_depth_atmosphere,
             )
                 .run_if(gameplay_allowed),
         )
@@ -250,8 +290,9 @@ fn main() {
         )
         .add_systems(
             Update,
-            (update_pop_particles, update_screen_shake).run_if(in_state(GameState::GameOver)),
+            update_pop_particles.run_if(in_state(GameState::GameOver)),
         )
+        .add_systems(Last, update_screen_shake.run_if(screen_shake_active))
         .run();
 }
 
@@ -270,7 +311,15 @@ fn setup(
         Camera2d,
         Hdr,
         Bloom {
-            intensity: 0.08,
+            intensity: 0.32,
+            low_frequency_boost: 0.82,
+            low_frequency_boost_curvature: 0.92,
+            high_pass_frequency: 0.85,
+            prefilter: BloomPrefilter {
+                threshold: 0.72,
+                threshold_softness: 0.4,
+            },
+            composite_mode: BloomCompositeMode::Additive,
             ..Bloom::default()
         },
     ));
@@ -282,7 +331,7 @@ fn setup(
     );
     commands.spawn((
         Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS))),
-        MeshMaterial2d(materials.add(Color::srgba(0.631, 0.773, 0.808, 0.82))),
+        MeshMaterial2d(materials.add(Color::linear_rgba(1.35, 1.75, 1.9, 0.88))),
         Transform::from_translation(BUBBLE_START),
         RisingCircle,
         HorizontalVelocity::default(),
@@ -292,8 +341,9 @@ fn setup(
     .with_children(|parent| {
         parent.spawn((
             Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS * 0.2))),
-            MeshMaterial2d(materials.add(Color::srgba(0.89, 0.969, 0.949, 0.9))),
-            Transform::from_xyz(-BUBBLE_RADIUS * 0.25, BUBBLE_RADIUS * 0.25, 0.1),
+            // Below bloom threshold so the specular stays visible inside the glowing shell.
+            MeshMaterial2d(materials.add(Color::srgba(0.94, 0.99, 1.0, 0.9))),
+            Transform::from_xyz(-BUBBLE_RADIUS * 0.25, BUBBLE_RADIUS * 0.25, 0.15),
         ));
     });
     commands.spawn((
@@ -837,8 +887,10 @@ fn spawn_cave_segment(
     materials: &mut Assets<ColorMaterial>,
     y: f32,
     gap_center_x: f32,
+    spawn_index: u32,
     teeth_in_upper_half: bool,
 ) {
+    let wall_color = cave_wall_color_for_depth(spawn_depth_meters(spawn_index));
     let half_screen = SCREEN_WIDTH * 0.5;
     let left_gap_edge = gap_center_x - GAP_WIDTH * 0.5;
     let right_gap_edge = gap_center_x + GAP_WIDTH * 0.5;
@@ -860,13 +912,15 @@ fn spawn_cave_segment(
         .with_children(|parent| {
             parent.spawn((
                 Mesh2d(meshes.add(Rectangle::new(left_wall_width, WALL_VISUAL_HEIGHT))),
-                MeshMaterial2d(materials.add(Color::srgb(0.239, 0.451, 0.522))),
+                MeshMaterial2d(materials.add(wall_color)),
                 Transform::from_xyz(left_wall_x, 0.0, 0.0),
+                CaveWall,
             ));
             parent.spawn((
                 Mesh2d(meshes.add(Rectangle::new(right_wall_width, WALL_VISUAL_HEIGHT))),
-                MeshMaterial2d(materials.add(Color::srgb(0.239, 0.451, 0.522))),
+                MeshMaterial2d(materials.add(wall_color)),
                 Transform::from_xyz(right_wall_x, 0.0, 0.0),
+                CaveWall,
             ));
 
             let tooth_offsets = if teeth_in_upper_half {
@@ -882,8 +936,9 @@ fn spawn_cave_segment(
                         Vec2::new(0.0, TOOTH_HEIGHT * 0.5),
                         Vec2::new(TOOTH_DEPTH, 0.0),
                     ))),
-                    MeshMaterial2d(materials.add(Color::srgb(0.239, 0.451, 0.522))),
+                    MeshMaterial2d(materials.add(wall_color)),
                     Transform::from_xyz(left_gap_edge, offset_y, 0.0),
+                    CaveWall,
                 ));
                 parent.spawn((
                     Mesh2d(meshes.add(Triangle2d::new(
@@ -891,8 +946,9 @@ fn spawn_cave_segment(
                         Vec2::new(0.0, TOOTH_HEIGHT * 0.5),
                         Vec2::new(-TOOTH_DEPTH, 0.0),
                     ))),
-                    MeshMaterial2d(materials.add(Color::srgb(0.239, 0.451, 0.522))),
+                    MeshMaterial2d(materials.add(wall_color)),
                     Transform::from_xyz(right_gap_edge, offset_y, 0.0),
+                    CaveWall,
                 ));
             }
         });
@@ -919,6 +975,7 @@ fn reset_and_spawn_cave(
             materials,
             y,
             gap_center_x,
+            spawn_index,
             spawn_index % 2 == 0,
         );
     }
@@ -945,6 +1002,7 @@ fn next_gap_center(previous_gap_center_x: f32) -> f32 {
 }
 
 fn enter_menu(
+    mut clear_color: ResMut<ClearColor>,
     mut gameplay_query: Query<
         &mut Visibility,
         (With<GameplayEntity>, Without<MenuUi>, Without<GameOverUi>),
@@ -967,6 +1025,7 @@ fn enter_menu(
         ),
     >,
 ) {
+    clear_color.0 = atmosphere_clear_color(0.0);
     for mut visibility in &mut gameplay_query {
         *visibility = Visibility::Hidden;
     }
@@ -982,6 +1041,7 @@ fn enter_menu(
 }
 
 fn enter_playing(
+    mut clear_color: ResMut<ClearColor>,
     mut commands: Commands,
     mut cave_generation: ResMut<CaveGeneration>,
     mut depth_state: ResMut<DepthState>,
@@ -1033,6 +1093,7 @@ fn enter_playing(
     }
 
     depth_state.pixels_scrolled = 0.0;
+    clear_color.0 = atmosphere_clear_color(0.0);
     run_state.time_alive_secs = 0.0;
     screen_shake.trauma = 0.0;
     screen_shake.elapsed_secs = 0.0;
@@ -1274,29 +1335,23 @@ fn update_screen_shake(
     mut screen_shake: ResMut<ScreenShake>,
     mut camera_query: Query<&mut Transform, With<Camera2d>>,
 ) {
-    let Ok(mut camera_transform) = camera_query.single_mut() else {
-        return;
-    };
-
-    if screen_shake.trauma <= 0.0 {
-        camera_transform.translation.x = 0.0;
-        camera_transform.translation.y = 0.0;
-        return;
-    }
-
-    screen_shake.elapsed_secs += time.delta_secs();
-    let decay = time.delta_secs() / SCREEN_SHAKE_DURATION;
+    let dt = time.delta_secs();
+    screen_shake.elapsed_secs += dt;
+    let decay = dt / SCREEN_SHAKE_DURATION;
     screen_shake.trauma = (screen_shake.trauma - decay).max(0.0);
 
     let shake_strength = screen_shake.trauma * screen_shake.trauma;
     let offset_x = (fastrand::f32() * 2.0 - 1.0) * SCREEN_SHAKE_MAX_OFFSET * shake_strength;
     let offset_y = (fastrand::f32() * 2.0 - 1.0) * SCREEN_SHAKE_MAX_OFFSET * shake_strength;
-    camera_transform.translation.x = offset_x;
-    camera_transform.translation.y = offset_y;
 
-    if screen_shake.trauma <= 0.0 {
-        camera_transform.translation.x = 0.0;
-        camera_transform.translation.y = 0.0;
+    for mut camera_transform in &mut camera_query {
+        if screen_shake.trauma > 0.0 {
+            camera_transform.translation.x = offset_x;
+            camera_transform.translation.y = offset_y;
+        } else {
+            camera_transform.translation.x = 0.0;
+            camera_transform.translation.y = 0.0;
+        }
     }
 }
 
@@ -1369,6 +1424,7 @@ fn scroll_cave_segments(
                 &mut materials,
                 spawn_y,
                 next_gap_center_x,
+                spawn_index,
                 spawn_index % 2 == 0,
             );
             top_y = spawn_y;
@@ -1382,6 +1438,7 @@ fn scroll_cave_segments(
 
 fn detect_wall_collision(
     mut next_state: ResMut<NextState<GameState>>,
+    mut screen_shake: ResMut<ScreenShake>,
     depth_state: Res<DepthState>,
     bubble_query: Query<&Transform, With<RisingCircle>>,
     mut bubble_visibility_query: Query<&mut Visibility, With<RisingCircle>>,
@@ -1412,6 +1469,8 @@ fn detect_wall_collision(
     let hit_right_wall = bubble_x + BUBBLE_RADIUS >= right_inner_edge;
 
     if hit_left_wall || hit_right_wall {
+        screen_shake.trauma = 1.0;
+        screen_shake.elapsed_secs = 0.0;
         if let Ok(mut bubble_visibility) = bubble_visibility_query.single_mut() {
             *bubble_visibility = Visibility::Hidden;
         }
@@ -1421,6 +1480,14 @@ fn detect_wall_collision(
         }
         next_state.set(GameState::GameOver);
     }
+}
+
+fn update_depth_atmosphere(
+    depth_state: Res<DepthState>,
+    mut clear_color: ResMut<ClearColor>,
+) {
+    let depth_meters = depth_state.pixels_scrolled / PIXELS_PER_METER;
+    clear_color.0 = atmosphere_clear_color(depth_meters);
 }
 
 fn update_depth_ui(
