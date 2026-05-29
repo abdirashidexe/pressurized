@@ -11,7 +11,10 @@ MVP → Full loop:
 2. Player steers left/right with arrow keys
 3. Basic cave walls — hit them and you pop
 4. Scrolling cave segments move down as you rise
-5. Stalactites as obstacles
-6. Current zones that push you sideways
-7. Score / depth counter
-8. Difficulty ramp (cave narrows, currents strengthen)
+5. Score / depth counter
+
+### Coming soon?
+1. Stalactites as obstacles
+2. Current zones that push you sideways
+3. Difficulty ramp (cave narrows, currents strengthen)
+

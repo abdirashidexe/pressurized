@@ -232,7 +232,7 @@ fn setup(
     ))
     .with_children(|parent| {
         parent.spawn((
-            Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS * 0.3))),
+            Mesh2d(meshes.add(Circle::new(BUBBLE_RADIUS * 0.2))),
             MeshMaterial2d(materials.add(Color::srgba(0.89, 0.969, 0.949, 0.9))),
             Transform::from_xyz(-BUBBLE_RADIUS * 0.25, BUBBLE_RADIUS * 0.25, 0.1),
         ));
