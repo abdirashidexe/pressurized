@@ -99,6 +99,9 @@ fn spawn_cave_segment(
             CaveSegment,
             Transform::from_xyz(0.0, y, 0.0),
             GlobalTransform::default(),
+            Visibility::Visible,
+            InheritedVisibility::default(),
+            ViewVisibility::default(),
         ))
         .with_children(|parent| {
             parent.spawn((
